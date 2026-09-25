@@ -10,6 +10,7 @@ const {
   ThreeXuiApiError
 } = require('./panelApi');
 const { sendDirectMessage } = require('./telegram');
+const { formatNotificationDate, notificationDay } = require('./dateFormat');
 
 const DAY_IN_MILLISECONDS = 24 * 60 * 60 * 1000;
 
@@ -32,11 +33,11 @@ function normaliseEnabled(enable) {
 }
 
 function formatExpiry(expiryTime) {
-  return expiryTime > 0 ? new Date(expiryTime).toISOString() : 'No expiration date';
+  return formatNotificationDate(expiryTime);
 }
 
 function reminderDay(now) {
-  return new Date(now).toISOString().slice(0, 10);
+  return notificationDay(now);
 }
 
 function remainingDays(expiryTime, now) {

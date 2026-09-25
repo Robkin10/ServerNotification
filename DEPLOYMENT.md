@@ -10,6 +10,7 @@ The release package intentionally excludes `.env`, `vless_tracker.db`, `node_mod
    - `DASHBOARD_USER`
    - `DASHBOARD_PASS`
    - `NOTIFICATION_TELEGRAM_BOT_TOKEN`
+   - `NOTIFICATION_TIME_ZONE=Asia/Yangon` (optional; this is the default)
 4. Install locked production dependencies:
 
    ```sh

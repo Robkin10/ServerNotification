@@ -1,16 +1,13 @@
 const { Bot } = require('node-telegram-bot-api');
 const { listClientStatesForTelegram } = require('./database');
+const { formatNotificationDate } = require('./dateFormat');
 
 function escapeMarkdown(value) {
   return String(value ?? '').replace(/([_`*\[\]])/g, '\\$1');
 }
 
 function formatExpiration(expiryTime) {
-  const timestamp = Number(expiryTime);
-  if (!Number.isFinite(timestamp) || timestamp <= 0) return 'No expiration date';
-  return new Intl.DateTimeFormat('en', {
-    year: 'numeric', month: 'long', day: 'numeric', timeZone: 'UTC'
-  }).format(new Date(timestamp));
+  return formatNotificationDate(expiryTime);
 }
 
 function subscriptionStatus(client, now = Date.now()) {

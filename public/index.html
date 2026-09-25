@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="dark">
+    <title>3X-UI Tracker</title>
+    <link rel="stylesheet" href="/styles.css">
+    <script src="/app.js" defer></script>
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">3X-UI / VLESS OBSERVABILITY</p>
+          <h1>Expiry &amp; change tracker</h1>
+        </div>
+        <div class="actions">
+          <nav class="primary-nav" aria-label="Primary navigation">
+            <a class="nav-link active" href="/" aria-current="page">Dashboard</a>
+            <a class="nav-link" href="/servers">Servers</a>
+          </nav>
+          <span id="connection-status" class="status loading">Loading</span>
+          <button id="send-test-notification" class="secondary" type="button">Send test notification</button>
+          <button id="refresh" type="button">Refresh</button>
+          <button id="logout" class="secondary" type="button">Sign out</button>
+        </div>
+      </header>
+
+      <section class="audit-panel" aria-live="polite">
+        <div>
+          <span class="label">Last successful audit</span>
+          <strong id="last-success">Loading&hellip;</strong>
+        </div>
+        <div>
+          <span class="label">Audit activity</span>
+          <strong id="audit-result">Waiting for data&hellip;</strong>
+        </div>
+        <p id="error-message" class="error-message" hidden></p>
+      </section>
+
+      <section class="metrics" aria-label="Client statistics">
+        <article class="metric metric-total"><span>Total tracked</span><strong id="total-count">&mdash;</strong></article>
+        <article class="metric metric-active"><span>Enabled</span><strong id="enabled-count">&mdash;</strong></article>
+        <article class="metric metric-warning"><span>Expired</span><strong id="expired-count">&mdash;</strong></article>
+        <article class="metric metric-muted"><span>Disabled</span><strong id="disabled-count">&mdash;</strong></article>
+      </section>
+
+      <section class="clients-panel">
+        <div class="panel-heading">
+          <div>
+            <p class="eyebrow">CLIENT STATE</p>
+            <h2>Tracked VLESS keys</h2>
+          </div>
+          <label class="search">
+            <span class="sr-only">Filter clients</span>
+            <input id="client-filter" type="search" placeholder="Filter by email, Telegram, or server" autocomplete="off">
+          </label>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>Server</th><th>Email</th><th>Telegram</th><th>Status</th><th>Expiration</th><th>Notification</th></tr>
+            </thead>
+            <tbody id="client-rows">
+              <tr><td colspan="6" class="empty">Loading client state&hellip;</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>

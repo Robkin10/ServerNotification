@@ -1,0 +1,26 @@
+{
+  "name": "3x-ui-client-expiry-tracker",
+  "version": "1.0.0",
+  "private": true,
+  "description": "3X-UI VLESS expiry tracking with Telegram notifications and a protected web dashboard.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "axios": "^1.20.0",
+    "axios-cookiejar-support": "^6.0.5",
+    "dotenv": "^16.6.1",
+    "express": "^5.1.0",
+    "node-cron": "^4.6.0",
+    "node-telegram-bot-api": "^2.1.0",
+    "sqlite3": "^6.0.1",
+    "tough-cookie": "^5.1.2"
+  },
+  "keywords": [],
+  "type": "commonjs",
+  "allowScripts": {
+    "sqlite3@6.0.1": true
+  }
+}

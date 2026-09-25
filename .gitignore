@@ -1,0 +1,4 @@
+.env
+vless_tracker.db
+node_modules/
+dist/

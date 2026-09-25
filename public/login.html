@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="dark">
+    <title>Sign in · 3X-UI Tracker</title>
+    <link rel="stylesheet" href="/login.css">
+    <script src="/login.js" defer></script>
+  </head>
+  <body>
+    <main class="login-shell">
+      <section class="login-card" aria-labelledby="login-title">
+        <p class="eyebrow">3X-UI / VLESS OBSERVABILITY</p>
+        <h1 id="login-title">Sign in to the tracker</h1>
+        <p class="login-copy">Use your dashboard credentials to view client state and manage server connections.</p>
+        <form id="login-form">
+          <label>
+            <span>Username</span>
+            <input id="username" name="username" autocomplete="username" required autofocus>
+          </label>
+          <label>
+            <span>Password</span>
+            <input id="password" name="password" type="password" autocomplete="current-password" required>
+          </label>
+          <p id="login-message" class="login-message" role="alert" aria-live="polite"></p>
+          <button id="login-submit" type="submit">Sign in</button>
+        </form>
+      </section>
+    </main>
+  </body>
+</html>

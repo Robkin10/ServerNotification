@@ -275,6 +275,19 @@ function listClientStates() {
       g.name COLLATE NOCASE ASC, s.name COLLATE NOCASE ASC, c.email COLLATE NOCASE ASC`);
 }
 
+/** Safe subscription details for a notification bot's own /start response. */
+function listClientStatesForTelegram(telegramId) {
+  return all(`SELECT
+      c.email, c.expiry_time, c.is_enabled, s.name AS server_name, g.name AS group_name
+    FROM client_state c
+    JOIN tracked_servers s ON s.id = c.server_id
+    JOIN server_groups g ON g.id = s.group_id
+    WHERE c.telegram_id = ?
+    ORDER BY
+      CASE WHEN c.expiry_time > 0 THEN c.expiry_time ELSE 9223372036854775807 END ASC,
+      g.name COLLATE NOCASE ASC, s.name COLLATE NOCASE ASC, c.email COLLATE NOCASE ASC`, [String(telegramId)]);
+}
+
 /** Summarise current, server-scoped client state without exposing panel credentials or sessions. */
 function getClientSummary(now = Date.now()) {
   return get(`SELECT
@@ -306,6 +319,7 @@ module.exports = {
   getTrackedServer,
   initializeDatabase,
   listClientStates,
+  listClientStatesForTelegram,
   listServerGroups,
   listServerSummaries,
   listTrackedServers,

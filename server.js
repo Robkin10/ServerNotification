@@ -19,6 +19,7 @@ const {
   updateTrackedServer
 } = require('./database');
 const { normalizeBaseUrl } = require('./panelApi');
+const { startWelcomeListener, stopWelcomeListener } = require('./telegram');
 const { TrackerEngine } = require('./trackerEngine');
 
 class InputError extends Error {}
@@ -536,6 +537,7 @@ async function start({ environment = process.env } = {}) {
   const host = environment.HOST?.trim() || '127.0.0.1';
   await initializeDatabase();
   await importEnvironmentServer(environment);
+  startWelcomeListener();
 
   const engine = new TrackerEngine();
   const app = createApp({ engine, environment });
@@ -556,6 +558,7 @@ async function start({ environment = process.env } = {}) {
     shuttingDown = true;
     console.log(`${signal} received; stopping dashboard.`);
     task.stop();
+    stopWelcomeListener().catch(() => console.error('Failed to stop Telegram welcome-message polling.'));
     server.close(() => {
       closeDatabase()
         .catch(() => console.error('Failed to close the tracker database.'))

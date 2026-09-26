@@ -6,6 +6,7 @@ const {
 const {
   createThreeXuiService,
   fetchClientDetails,
+  fetchClientLinks,
   fetchClients,
   ThreeXuiApiError
 } = require('./panelApi');
@@ -91,6 +92,22 @@ function expiringSoonMessage(email, expiryTime, days, server) {
   ].filter(Boolean).join('\n');
 }
 
+function emailKey(value) {
+  return typeof value === 'string' ? value.trim().toLowerCase() : '';
+}
+
+function clientLinkMessage(email, server, link) {
+  return [
+    '*Your VLESS Key link*',
+    '',
+    serverLine(server),
+    `Email: \`${escapeMarkdown(email)}\``,
+    '',
+    'Import or Paste this link into your VLESS client:',
+    `\`${escapeMarkdown(link)}\``
+  ].filter(Boolean).join('\n');
+}
+
 function panelErrorMessage(error) {
   if (error instanceof ThreeXuiApiError) return error.toPublicMessage();
   return 'The scheduled panel audit could not be completed.';
@@ -128,6 +145,7 @@ class TrackerEngine {
     this.multiServerMode = !legacySourcesProvided;
     this.listClients = options.listClients || fetchClients;
     this.getClientDetails = options.getClientDetails || fetchClientDetails;
+    this.getClientLinks = options.getClientLinks || fetchClientLinks;
     this.listServers = options.listServers || listTrackedServers;
     this.createPanelService = options.createPanelService || createThreeXuiService;
     this.getState = options.getState || getClientState;
@@ -139,6 +157,7 @@ class TrackerEngine {
     this.auditInProgress = false;
     this.followUpAuditServerIds = new Set();
     this.testNotificationInProgress = false;
+    this.linkDeliveryServerIds = new Set();
     this.status = {
       running: false,
       lastStartedAt: null,
@@ -173,6 +192,29 @@ class TrackerEngine {
     return {
       clients: await panel.listClients({ twoFactorCode: this.twoFactorCode() }),
       getClientDetails: (email) => panel.getClientDetails(email, { twoFactorCode: this.twoFactorCode() })
+    };
+  }
+
+  /** Read the current client and panel-generated link source for one delivery run. */
+  async getClientLinkSource(server) {
+    if (!this.multiServerMode) {
+      return {
+        clients: await this.listClients({ twoFactorCode: this.twoFactorCode() }),
+        getClientDetails: (email) => this.getClientDetails(email, { twoFactorCode: this.twoFactorCode() }),
+        getClientLinks: (email) => this.getClientLinks(email, { twoFactorCode: this.twoFactorCode() })
+      };
+    }
+
+    const panel = await this.createPanelService({
+      baseUrl: server.base_url,
+      bearerToken: server.bearer_token,
+      username: server.username,
+      password: server.password
+    });
+    return {
+      clients: await panel.listClients({ twoFactorCode: this.twoFactorCode() }),
+      getClientDetails: (email) => panel.getClientDetails(email, { twoFactorCode: this.twoFactorCode() }),
+      getClientLinks: (email) => panel.getClientLinks(email, { twoFactorCode: this.twoFactorCode() })
     };
   }
 
@@ -433,11 +475,114 @@ class TrackerEngine {
       this.testNotificationInProgress = false;
     }
   }
+
+  /**
+   * Send the current VLESS link(s) for clients belonging to exactly one saved
+   * panel. The browser receives delivery totals only; VLESS credentials stay
+   * in the panel response and the recipient's private Telegram message.
+   */
+  async sendClientLinks(server) {
+    const serverId = Number(server?.id);
+    if (!Number.isSafeInteger(serverId) || serverId < 1) {
+      throw new Error('A saved server is required for client link delivery.');
+    }
+    if (this.linkDeliveryServerIds.has(serverId)) {
+      return {
+        success: false, skipped: true, clientsChecked: 0, linksPrepared: 0,
+        sent: 0, failed: 0, skippedClients: 0, missingTelegram: 0,
+        validationFailures: 0, detailFailures: 0, linkFailures: 0
+      };
+    }
+
+    this.linkDeliveryServerIds.add(serverId);
+    try {
+      const source = await this.getClientLinkSource(server);
+      if (!Array.isArray(source.clients)) {
+        throw new Error('Panel link data did not contain a client array.');
+      }
+
+      const result = {
+        success: true,
+        skipped: false,
+        clientsChecked: 0,
+        linksPrepared: 0,
+        sent: 0,
+        failed: 0,
+        skippedClients: 0,
+        missingTelegram: 0,
+        validationFailures: 0,
+        detailFailures: 0,
+        linkFailures: 0
+      };
+      const checkedEmails = new Set();
+
+      for (const clientSummary of source.clients) {
+        const requestedEmail = emailKey(clientSummary?.email);
+        if (!requestedEmail || checkedEmails.has(requestedEmail)) continue;
+        checkedEmails.add(requestedEmail);
+        result.clientsChecked += 1;
+
+        let details;
+        try {
+          details = await source.getClientDetails(clientSummary.email);
+        } catch {
+          result.detailFailures += 1;
+          result.skippedClients += 1;
+          continue;
+        }
+
+        // Never pair a Telegram account with a link unless the detail endpoint
+        // confirms it is for the exact client email we requested.
+        const confirmedEmail = emailKey(details?.email);
+        if (!confirmedEmail || confirmedEmail !== requestedEmail) {
+          result.validationFailures += 1;
+          result.skippedClients += 1;
+          continue;
+        }
+
+        if (!isValidTelegramId(details.tgId)) {
+          result.missingTelegram += 1;
+          result.skippedClients += 1;
+          continue;
+        }
+
+        let links;
+        try {
+          links = await source.getClientLinks(details.email);
+        } catch {
+          result.linkFailures += 1;
+          result.skippedClients += 1;
+          continue;
+        }
+        if (!links.length) {
+          result.linkFailures += 1;
+          result.skippedClients += 1;
+          continue;
+        }
+
+        result.linksPrepared += links.length;
+        const recipientId = String(details.tgId).trim();
+        for (const link of links) {
+          try {
+            if (await this.notify(recipientId, clientLinkMessage(details.email, server, link))) result.sent += 1;
+            else result.failed += 1;
+          } catch {
+            result.failed += 1;
+          }
+        }
+      }
+
+      return result;
+    } finally {
+      this.linkDeliveryServerIds.delete(serverId);
+    }
+  }
 }
 
 module.exports = {
   TrackerEngine,
   isValidTelegramId,
+  clientLinkMessage,
   normaliseEnabled,
   normaliseExpiryTime,
   remainingDays

@@ -103,7 +103,8 @@ function createPanelUrls(baseUrl) {
     login: appendPanelPath(normalizedBaseUrl, '/login'),
     inbounds: appendPanelPath(normalizedBaseUrl, `${apiPath}/inbounds/list`),
     clients: appendPanelPath(normalizedBaseUrl, `${apiPath}/clients/list`),
-    clientDetails: appendPanelPath(normalizedBaseUrl, `${apiPath}/clients/get`)
+    clientDetails: appendPanelPath(normalizedBaseUrl, `${apiPath}/clients/get`),
+    clientLinks: appendPanelPath(normalizedBaseUrl, `${apiPath}/clients/links`)
   };
 }
 
@@ -337,6 +338,26 @@ class ThreeXuiService {
     };
   }
 
+  async requestClientLinks(email) {
+    if (typeof email !== 'string' || email.trim() === '') {
+      throw new ThreeXuiApiError('INVALID_RESPONSE', '3X-UI client link request requires an email.');
+    }
+
+    const response = await this.request({
+      method: 'GET',
+      url: `${this.configuration.clientLinks}/${encodeURIComponent(email.trim())}`,
+      headers: this.authorizationHeaders()
+    });
+    const payload = this.validateApiResponse(response, 'client link request');
+    if (!Array.isArray(payload.obj) || payload.obj.some((link) => typeof link !== 'string')) {
+      throw new ThreeXuiApiError('INVALID_RESPONSE', '3X-UI client link response did not contain an array of links.');
+    }
+
+    // Only send the VLESS credentials requested by this application. Do not
+    // retain any links from another protocol or expose them to the browser.
+    return payload.obj.map((link) => link.trim()).filter((link) => /^vless:\/\//i.test(link));
+  }
+
   async withAuthenticatedSession(requestList, twoFactorCode) {
     const sessionVersion = await this.authenticate(twoFactorCode);
     try {
@@ -367,6 +388,11 @@ class ThreeXuiService {
    */
   async getClientDetails(email, { twoFactorCode } = {}) {
     return this.withAuthenticatedSession(() => this.requestClientDetails(email), twoFactorCode);
+  }
+
+  /** Retrieve the panel-generated VLESS share link(s) for one client email. */
+  async getClientLinks(email, { twoFactorCode } = {}) {
+    return this.withAuthenticatedSession(() => this.requestClientLinks(email), twoFactorCode);
   }
 }
 
@@ -409,12 +435,18 @@ async function fetchClientDetails(email, options) {
   return service.getClientDetails(email, options);
 }
 
+async function fetchClientLinks(email, options) {
+  const service = await getThreeXuiService();
+  return service.getClientLinks(email, options);
+}
+
 module.exports = {
   ThreeXuiApiError,
   ThreeXuiService,
   createPanelUrls,
   createThreeXuiService,
   fetchClientDetails,
+  fetchClientLinks,
   fetchClients,
   fetchInbounds,
   getThreeXuiService,

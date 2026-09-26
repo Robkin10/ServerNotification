@@ -39,6 +39,24 @@
         <p id="error-message" class="error-message" hidden></p>
       </section>
 
+      <section class="link-delivery-panel" aria-labelledby="link-delivery-title">
+        <div>
+          <p class="eyebrow">SERVER MIGRATION</p>
+          <h2 id="link-delivery-title">Send client connection links</h2>
+          <p class="muted link-delivery-note">Select the new server after its 3X-UI details are saved. Each current VLESS link is matched to the panel email and its verified Telegram ID, then sent only by the notification bot.</p>
+        </div>
+        <div class="link-delivery-controls">
+          <label class="link-server-field">
+            <span>Source server</span>
+            <select id="link-server" aria-describedby="link-delivery-message">
+              <option value="">Select an enabled server</option>
+            </select>
+          </label>
+          <button id="send-client-links" type="button" disabled>Send client links</button>
+        </div>
+        <p id="link-delivery-message" class="link-delivery-message" aria-live="polite"></p>
+      </section>
+
       <section class="metrics" aria-label="Client statistics">
         <article class="metric metric-total"><span>Total tracked</span><strong id="total-count">&mdash;</strong></article>
         <article class="metric metric-active"><span>Enabled</span><strong id="enabled-count">&mdash;</strong></article>

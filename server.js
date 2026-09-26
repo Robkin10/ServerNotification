@@ -11,6 +11,7 @@ const {
   createTrackedServer,
   deleteTrackedServer,
   getClientSummary,
+  getTrackedServer,
   initializeDatabase,
   listClientStates,
   listServerGroups,
@@ -247,6 +248,7 @@ function createApp({
     createTrackedServer,
     deleteTrackedServer,
     getClientSummary,
+    getTrackedServer,
     listClientStates,
     listServerGroups,
     listServerSummaries,
@@ -423,6 +425,47 @@ function createApp({
       response.json({ success: true, message: 'Server and its stored client state were removed.' });
     } catch (error) {
       sendMutationError(response, error);
+    }
+  });
+
+  app.post('/api/servers/:serverId/notifications/links', async (request, response) => {
+    if (!requireDashboardRequest(request, response)) return;
+    try {
+      const server = await database.getTrackedServer(serverIdFrom(request));
+      if (!server) {
+        response.status(404).json({ success: false, message: 'Server not found.' });
+        return;
+      }
+      if (Number(server.is_enabled) !== 1) {
+        response.status(409).json({ success: false, message: 'Enable the selected server before sending client links.' });
+        return;
+      }
+      const result = await engine.sendClientLinks(server);
+      if (result.skipped) {
+        response.status(409).json({ success: false, message: 'A link delivery is already running for this server.' });
+        return;
+      }
+      response.json({
+        success: result.success,
+        message: `Link delivery complete: ${result.sent} delivered, ${result.failed} failed, ${result.skippedClients} skipped.`,
+        result: {
+          clientsChecked: result.clientsChecked,
+          linksPrepared: result.linksPrepared,
+          sent: result.sent,
+          failed: result.failed,
+          skippedClients: result.skippedClients,
+          missingTelegram: result.missingTelegram,
+          validationFailures: result.validationFailures,
+          detailFailures: result.detailFailures,
+          linkFailures: result.linkFailures
+        }
+      });
+    } catch (error) {
+      if (error instanceof InputError) {
+        response.status(400).json({ success: false, message: error.message });
+        return;
+      }
+      response.status(502).json({ success: false, message: 'Client links could not be fetched from the selected server.' });
     }
   });
 

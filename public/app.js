@@ -3,6 +3,9 @@ const elements = {
   logout: document.querySelector('#logout'),
   refresh: document.querySelector('#refresh'),
   sendTestNotification: document.querySelector('#send-test-notification'),
+  linkServer: document.querySelector('#link-server'),
+  sendClientLinks: document.querySelector('#send-client-links'),
+  linkDeliveryMessage: document.querySelector('#link-delivery-message'),
   error: document.querySelector('#error-message'),
   lastSuccess: document.querySelector('#last-success'),
   auditResult: document.querySelector('#audit-result'),
@@ -16,6 +19,7 @@ const elements = {
 
 let clients = [];
 let csrfToken = '';
+let linkServers = [];
 
 function formatDate(value) {
   if (!value) return 'Not yet completed';
@@ -29,6 +33,19 @@ function escapeHtml(value) {
 function setStatus(kind, text) {
   elements.status.className = `status ${kind}`;
   elements.status.textContent = text;
+}
+
+function showLinkDeliveryMessage(message = '', kind = '') {
+  elements.linkDeliveryMessage.textContent = message;
+  elements.linkDeliveryMessage.className = `link-delivery-message ${kind}`;
+}
+
+function selectedLinkServer() {
+  return linkServers.find((server) => server.id === Number(elements.linkServer.value));
+}
+
+function updateLinkDeliveryButton() {
+  elements.sendClientLinks.disabled = !selectedLinkServer();
 }
 
 function clientServerLabel(client) {
@@ -112,6 +129,25 @@ async function loadDashboard() {
   }
 }
 
+async function loadLinkServers() {
+  const selectedId = elements.linkServer.value;
+  try {
+    const payload = await requestJson('/api/servers');
+    linkServers = payload.data.servers.filter((server) => server.enabled);
+    elements.linkServer.innerHTML = [
+      '<option value="">Select an enabled server</option>',
+      ...linkServers.map((server) => `<option value="${server.id}">${escapeHtml([server.groupName, server.name].filter(Boolean).join(' / '))}</option>`)
+    ].join('');
+    if (linkServers.some((server) => String(server.id) === selectedId)) elements.linkServer.value = selectedId;
+    updateLinkDeliveryButton();
+    if (!linkServers.length) showLinkDeliveryMessage('Add and enable the replacement server before sending client links.');
+  } catch (error) {
+    linkServers = [];
+    updateLinkDeliveryButton();
+    showLinkDeliveryMessage(error.message || 'Could not load the server list.', 'error');
+  }
+}
+
 async function sendTestNotification() {
   if (!window.confirm('Send one test notification to each Telegram recipient on every enabled server?')) return;
   elements.sendTestNotification.disabled = true;
@@ -134,6 +170,29 @@ async function sendTestNotification() {
   }
 }
 
+async function sendClientLinks() {
+  const server = selectedLinkServer();
+  if (!server) return;
+  const label = [server.groupName, server.name].filter(Boolean).join(' / ');
+  if (!window.confirm(`Send each current VLESS link from ${label} to the matching Telegram user? Links are private credentials and will be sent only through the notification bot.`)) return;
+
+  elements.sendClientLinks.disabled = true;
+  elements.sendClientLinks.textContent = 'Sending links…';
+  showLinkDeliveryMessage('Fetching current client links from the selected server…');
+  try {
+    const payload = await requestJson(`/api/servers/${encodeURIComponent(server.id)}/notifications/links`, {
+      method: 'POST',
+      headers: { 'X-Requested-With': 'XMLHttpRequest' }
+    });
+    showLinkDeliveryMessage(payload.message, 'success');
+  } catch (error) {
+    showLinkDeliveryMessage(error.message || 'Client links could not be sent.', 'error');
+  } finally {
+    elements.sendClientLinks.textContent = 'Send client links';
+    updateLinkDeliveryButton();
+  }
+}
+
 async function signOut() {
   elements.logout.disabled = true;
   try {
@@ -150,7 +209,7 @@ async function initialiseDashboard() {
   try {
     const payload = await requestJson('/api/auth/session');
     csrfToken = payload.data.csrfToken;
-    await loadDashboard();
+    await Promise.all([loadDashboard(), loadLinkServers()]);
     window.setInterval(loadDashboard, 30_000);
   } catch {
     // requestJson redirects to the sign-in screen if the session is absent.
@@ -159,6 +218,8 @@ async function initialiseDashboard() {
 
 elements.refresh.addEventListener('click', loadDashboard);
 elements.sendTestNotification.addEventListener('click', sendTestNotification);
+elements.linkServer.addEventListener('change', updateLinkDeliveryButton);
+elements.sendClientLinks.addEventListener('click', sendClientLinks);
 elements.logout.addEventListener('click', signOut);
 elements.filter.addEventListener('input', renderRows);
 initialiseDashboard();

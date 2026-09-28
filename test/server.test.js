@@ -276,3 +276,51 @@ test('sends client links only for the selected server through a CSRF-protected a
     await once(server, 'close');
   }
 });
+
+test('sends an individual client link only to the requested panel client', async () => {
+  const calls = [];
+  const configuredServer = {
+    id: 8, group_name: 'Migration', name: 'Replacement node', base_url: 'https://panel.example.test',
+    bearer_token: 'not-returned', username: 'panel-user', password: 'not-returned', is_enabled: 1
+  };
+  const engine = {
+    getStatus: () => ({}),
+    sendClientLinks: async (...args) => {
+      calls.push(args);
+      return {
+        success: true, skipped: false, clientsChecked: 1, linksPrepared: 1, sent: 1, failed: 0,
+        skippedClients: 0, missingTelegram: 0, validationFailures: 0, detailFailures: 0, linkFailures: 0
+      };
+    }
+  };
+  const database = { getTrackedServer: async (id) => Number(id) === 8 ? configuredServer : undefined };
+  const server = http.createServer(createApp({ engine, database, environment: { DASHBOARD_USER: 'user', DASHBOARD_PASS: 'pass' } }));
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+
+  try {
+    const port = server.address().port;
+    const session = await signIn(port, 'user', 'pass');
+    const delivered = await request(port, '/api/servers/8/notifications/links/alice%40example.test', {
+      method: 'POST',
+      headers: {
+        ...session.headers, 'X-Requested-With': 'XMLHttpRequest', 'X-CSRF-Token': session.csrfToken
+      }
+    });
+
+    assert.equal(delivered.status, 200);
+    assert.deepEqual(calls, [[configuredServer, { clientEmail: 'alice@example.test' }]]);
+    assert.deepEqual(JSON.parse(delivered.body), {
+      success: true,
+      message: 'Individual link delivery complete: 1 delivered, 0 failed, 0 skipped.',
+      result: {
+        clientsChecked: 1, linksPrepared: 1, sent: 1, failed: 0, skippedClients: 0,
+        missingTelegram: 0, validationFailures: 0, detailFailures: 0, linkFailures: 0
+      }
+    });
+    assert.doesNotMatch(delivered.body, /not-returned|vless:\/\//);
+  } finally {
+    server.close();
+    await once(server, 'close');
+  }
+});

@@ -43,6 +43,7 @@ async function createClientStateTable() {
     is_enabled INTEGER,
     is_expired_notified INTEGER DEFAULT 0,
     last_expiry_reminder_day TEXT,
+    vless_links TEXT,
     PRIMARY KEY (server_id, client_id)
   )`);
   await run('CREATE INDEX IF NOT EXISTS client_state_server_idx ON client_state(server_id)');
@@ -62,6 +63,9 @@ async function migrateClientStateTable() {
 
   const columns = await all('PRAGMA table_info(client_state)');
   if (columns.some((column) => column.name === 'server_id') && columns.some((column) => column.name === 'client_id')) {
+    if (!columns.some((column) => column.name === 'vless_links')) {
+      await run('ALTER TABLE client_state ADD COLUMN vless_links TEXT');
+    }
     await run('CREATE INDEX IF NOT EXISTS client_state_server_idx ON client_state(server_id)');
     return;
   }
@@ -74,10 +78,10 @@ async function migrateClientStateTable() {
     await run(
       `INSERT INTO client_state (
         server_id, client_id, telegram_id, email, expiry_time, is_enabled,
-        is_expired_notified, last_expiry_reminder_day
+        is_expired_notified, last_expiry_reminder_day, vless_links
       )
       SELECT 0, vless_id, telegram_id, email, expiry_time, is_enabled,
-        is_expired_notified, ${hasReminderColumn ? 'last_expiry_reminder_day' : 'NULL'}
+        is_expired_notified, ${hasReminderColumn ? 'last_expiry_reminder_day' : 'NULL'}, NULL
       FROM client_state_legacy`
     );
     await run('DROP TABLE client_state_legacy');
@@ -229,20 +233,22 @@ function upsertClientState(
   expiryTime,
   isEnabled,
   isExpiredNotified,
-  lastExpiryReminderDay = null
+  lastExpiryReminderDay = null,
+  vlessLinks = null
 ) {
   return run(
     `INSERT INTO client_state (
       server_id, client_id, telegram_id, email, expiry_time, is_enabled,
-      is_expired_notified, last_expiry_reminder_day
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      is_expired_notified, last_expiry_reminder_day, vless_links
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(server_id, client_id) DO UPDATE SET
       telegram_id = excluded.telegram_id,
       email = excluded.email,
       expiry_time = excluded.expiry_time,
       is_enabled = excluded.is_enabled,
       is_expired_notified = excluded.is_expired_notified,
-      last_expiry_reminder_day = excluded.last_expiry_reminder_day`,
+      last_expiry_reminder_day = excluded.last_expiry_reminder_day,
+      vless_links = excluded.vless_links`,
     [
       Number(serverId),
       String(clientId),
@@ -251,9 +257,18 @@ function upsertClientState(
       Number(expiryTime) || 0,
       isEnabled ? 1 : 0,
       isExpiredNotified ? 1 : 0,
-      lastExpiryReminderDay || null
+      lastExpiryReminderDay || null,
+      vlessLinks || null
     ]
   );
+}
+
+/** Cached credentials stay in the database and are never exposed to dashboard routes. */
+function listClientStatesForServer(serverId) {
+  return all(`SELECT client_id, telegram_id, email, vless_links
+    FROM client_state
+    WHERE server_id = ?
+    ORDER BY email COLLATE NOCASE ASC`, [Number(serverId)]);
 }
 
 /** Attach preserved single-panel state to the one-time imported default server. */
@@ -319,6 +334,7 @@ module.exports = {
   getTrackedServer,
   initializeDatabase,
   listClientStates,
+  listClientStatesForServer,
   listClientStatesForTelegram,
   listServerGroups,
   listServerSummaries,

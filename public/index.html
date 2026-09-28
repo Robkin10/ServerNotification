@@ -43,7 +43,7 @@
         <div>
           <p class="eyebrow">SERVER MIGRATION</p>
           <h2 id="link-delivery-title">Send client connection links</h2>
-          <p class="muted link-delivery-note">Select the new server after its 3X-UI details are saved. Each current VLESS link is matched to the panel email and its verified Telegram ID, then sent only by the notification bot.</p>
+          <p class="muted link-delivery-note">Links are refreshed during scheduled 3X-UI audits. Send the latest cached VLESS link to each matched, verified Telegram user without another panel request.</p>
         </div>
         <div class="link-delivery-controls">
           <label class="link-server-field">
@@ -78,10 +78,10 @@
         <div class="table-wrap">
           <table>
             <thead>
-              <tr><th>Server</th><th>Email</th><th>Telegram</th><th>Status</th><th>Expiration</th><th>Notification</th></tr>
+              <tr><th>Server</th><th>Email</th><th>Telegram</th><th>Status</th><th>Expiration</th><th>Notification</th><th>Action</th></tr>
             </thead>
             <tbody id="client-rows">
-              <tr><td colspan="6" class="empty">Loading client state&hellip;</td></tr>
+              <tr><td colspan="7" class="empty">Loading client state&hellip;</td></tr>
             </tbody>
           </table>
         </div>

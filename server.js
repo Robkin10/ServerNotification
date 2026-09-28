@@ -230,6 +230,13 @@ function serverIdFrom(request) {
   return serverId;
 }
 
+function clientEmailFrom(request) {
+  const email = request.params.clientEmail;
+  if (typeof email !== 'string' || !email.trim()) throw new InputError('Client email is required.');
+  if (email.trim().length > 500) throw new InputError('Client email is too long.');
+  return email.trim();
+}
+
 function sendMutationError(response, error) {
   if (error instanceof InputError) {
     response.status(400).json({ success: false, message: error.message });
@@ -465,7 +472,53 @@ function createApp({
         response.status(400).json({ success: false, message: error.message });
         return;
       }
-      response.status(502).json({ success: false, message: 'Client links could not be fetched from the selected server.' });
+      response.status(500).json({ success: false, message: 'Stored client links could not be sent.' });
+    }
+  });
+
+  app.post('/api/servers/:serverId/notifications/links/:clientEmail', async (request, response) => {
+    if (!requireDashboardRequest(request, response)) return;
+    try {
+      const server = await database.getTrackedServer(serverIdFrom(request));
+      if (!server) {
+        response.status(404).json({ success: false, message: 'Server not found.' });
+        return;
+      }
+      if (Number(server.is_enabled) !== 1) {
+        response.status(409).json({ success: false, message: 'Enable the selected server before sending a client link.' });
+        return;
+      }
+      const email = clientEmailFrom(request);
+      const result = await engine.sendClientLinks(server, { clientEmail: email });
+      if (result.skipped) {
+        response.status(409).json({ success: false, message: 'A link delivery is already running for this server.' });
+        return;
+      }
+      if (result.clientsChecked === 0) {
+        response.status(404).json({ success: false, message: 'Client was not found on the selected server.' });
+        return;
+      }
+      response.json({
+        success: result.success,
+        message: `Individual link delivery complete: ${result.sent} delivered, ${result.failed} failed, ${result.skippedClients} skipped.`,
+        result: {
+          clientsChecked: result.clientsChecked,
+          linksPrepared: result.linksPrepared,
+          sent: result.sent,
+          failed: result.failed,
+          skippedClients: result.skippedClients,
+          missingTelegram: result.missingTelegram,
+          validationFailures: result.validationFailures,
+          detailFailures: result.detailFailures,
+          linkFailures: result.linkFailures
+        }
+      });
+    } catch (error) {
+      if (error instanceof InputError) {
+        response.status(400).json({ success: false, message: error.message });
+        return;
+      }
+      response.status(500).json({ success: false, message: 'Stored client link could not be sent.' });
     }
   });
 

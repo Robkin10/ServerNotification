@@ -56,7 +56,7 @@ function renderRows() {
   const search = elements.filter.value.trim().toLowerCase();
   const visibleClients = clients.filter((client) => `${client.email} ${client.telegramId || ''} ${clientServerLabel(client)}`.toLowerCase().includes(search));
   if (!visibleClients.length) {
-    elements.rows.innerHTML = '<tr><td colspan="6" class="empty">No matching tracked clients.</td></tr>';
+    elements.rows.innerHTML = '<tr><td colspan="7" class="empty">No matching tracked clients.</td></tr>';
     return;
   }
 
@@ -65,7 +65,11 @@ function renderRows() {
     const expiry = client.expiryTime ? formatDate(client.expiryTime) : 'No expiration';
     const notification = client.expired ? (client.expiryNotified ? ['enabled', 'Sent'] : ['pending', 'Pending']) : '&mdash;';
     const notificationHtml = Array.isArray(notification) ? `<span class="badge ${notification[0]}">${notification[1]}</span>` : notification;
-    return `<tr><td class="server-cell">${escapeHtml(clientServerLabel(client))}</td><td>${escapeHtml(client.email)}</td><td class="muted">${escapeHtml(client.telegramId || 'Not bound')}</td><td><span class="badge ${state[0]}">${state[1]}</span></td><td>${escapeHtml(expiry)}</td><td>${notificationHtml}</td></tr>`;
+    const canSendLink = Number.isSafeInteger(client.serverId) && Boolean(client.telegramId) && client.email !== '(unnamed)';
+    const action = canSendLink
+      ? `<button class="table-button send-client-link" type="button" data-server-id="${client.serverId}" data-client-email="${escapeHtml(client.email)}">Send link</button>`
+      : '<span class="muted">Unavailable</span>';
+    return `<tr><td class="server-cell">${escapeHtml(clientServerLabel(client))}</td><td>${escapeHtml(client.email)}</td><td class="muted">${escapeHtml(client.telegramId || 'Not bound')}</td><td><span class="badge ${state[0]}">${state[1]}</span></td><td>${escapeHtml(expiry)}</td><td>${notificationHtml}</td><td>${action}</td></tr>`;
   }).join('');
 }
 
@@ -174,11 +178,11 @@ async function sendClientLinks() {
   const server = selectedLinkServer();
   if (!server) return;
   const label = [server.groupName, server.name].filter(Boolean).join(' / ');
-  if (!window.confirm(`Send each current VLESS link from ${label} to the matching Telegram user? Links are private credentials and will be sent only through the notification bot.`)) return;
+  if (!window.confirm(`Send each latest cached VLESS link from ${label} to the matching Telegram user? Links are private credentials and will be sent only through the notification bot.`)) return;
 
   elements.sendClientLinks.disabled = true;
   elements.sendClientLinks.textContent = 'Sending links…';
-  showLinkDeliveryMessage('Fetching current client links from the selected server…');
+  showLinkDeliveryMessage('Sending the latest links cached from the selected server…');
   try {
     const payload = await requestJson(`/api/servers/${encodeURIComponent(server.id)}/notifications/links`, {
       method: 'POST',
@@ -190,6 +194,29 @@ async function sendClientLinks() {
   } finally {
     elements.sendClientLinks.textContent = 'Send client links';
     updateLinkDeliveryButton();
+  }
+}
+
+async function sendIndividualClientLink(button) {
+  const serverId = Number(button.dataset.serverId);
+  const email = button.dataset.clientEmail || '';
+  if (!Number.isSafeInteger(serverId) || !email) return;
+  if (!window.confirm(`Send the latest cached VLESS link for ${email} to that user's Telegram account?`)) return;
+
+  button.disabled = true;
+  button.textContent = 'Sending…';
+  showLinkDeliveryMessage(`Sending the latest cached link for ${email}…`);
+  try {
+    const payload = await requestJson(`/api/servers/${encodeURIComponent(serverId)}/notifications/links/${encodeURIComponent(email)}`, {
+      method: 'POST',
+      headers: { 'X-Requested-With': 'XMLHttpRequest' }
+    });
+    showLinkDeliveryMessage(payload.message, 'success');
+  } catch (error) {
+    showLinkDeliveryMessage(error.message || 'Client link could not be sent.', 'error');
+  } finally {
+    button.disabled = false;
+    button.textContent = 'Send link';
   }
 }
 
@@ -220,6 +247,10 @@ elements.refresh.addEventListener('click', loadDashboard);
 elements.sendTestNotification.addEventListener('click', sendTestNotification);
 elements.linkServer.addEventListener('change', updateLinkDeliveryButton);
 elements.sendClientLinks.addEventListener('click', sendClientLinks);
+elements.rows.addEventListener('click', (event) => {
+  const button = event.target.closest('.send-client-link');
+  if (button) sendIndividualClientLink(button);
+});
 elements.logout.addEventListener('click', signOut);
 elements.filter.addEventListener('input', renderRows);
 initialiseDashboard();

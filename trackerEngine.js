@@ -1,4 +1,5 @@
 const {
+  deleteClientStatesAbsentFromPanel,
   getClientState,
   listClientStatesForServer,
   listTrackedServers,
@@ -8,180 +9,74 @@ const {
   createThreeXuiService,
   fetchClientDetails,
   fetchClientLinks,
-  fetchClients,
-  ThreeXuiApiError
+  fetchClients
 } = require('./panelApi');
 const { sendDirectMessage } = require('./telegram');
-const { formatNotificationDate, notificationDay } = require('./dateFormat');
-
-const DAY_IN_MILLISECONDS = 24 * 60 * 60 * 1000;
-
-function isValidTelegramId(tgId) {
-  if (tgId === undefined || tgId === null) return false;
-  const value = String(tgId).trim();
-  return value !== '' && value !== '0';
-}
-
-function normaliseExpiryTime(expiryTime) {
-  const value = Number(expiryTime);
-  return Number.isFinite(value) && value > 0 ? value : 0;
-}
-
-function normaliseEnabled(enable) {
-  if (typeof enable === 'string') {
-    return enable.trim() === '1' || enable.trim().toLowerCase() === 'true';
-  }
-  return enable === true || enable === 1;
-}
-
-function formatExpiry(expiryTime) {
-  return formatNotificationDate(expiryTime);
-}
-
-function reminderDay(now) {
-  return notificationDay(now);
-}
-
-function remainingDays(expiryTime, now) {
-  return Math.ceil((expiryTime - now) / DAY_IN_MILLISECONDS);
-}
-
-function escapeMarkdown(value) {
-  return String(value ?? '').replace(/([_`*\[\]])/g, '\\$1');
-}
-
-function serverLabel(server) {
-  if (!server) return '';
-  return [server.group_name, server.name].filter(Boolean).join(' / ');
-}
-
-function serverLine(server) {
-  const label = serverLabel(server);
-  return label ? `Server: \`${escapeMarkdown(label)}\`` : null;
-}
-
-function expiredMessage(email, expiryTime, server) {
-  return [
-    '*VLESS key expired*',
-    '',
-    serverLine(server),
-    `Email: \`${escapeMarkdown(email)}\``,
-    `Expired: \`${formatExpiry(expiryTime)}\``
-  ].filter(Boolean).join('\n');
-}
-
-function updatedMessage(email, expiryTime, isEnabled, server) {
-  return [
-    '*VLESS key configuration updated*',
-    '',
-    serverLine(server),
-    `Email: \`${escapeMarkdown(email)}\``,
-    `Status: *${isEnabled ? 'Enabled' : 'Disabled'}*`,
-    `Expiry: \`${formatExpiry(expiryTime)}\``
-  ].filter(Boolean).join('\n');
-}
-
-function expiringSoonMessage(email, expiryTime, days, server) {
-  const dayLabel = days === 1 ? 'day' : 'days';
-  return [
-    '*VLESS key expires soon*',
-    '',
-    serverLine(server),
-    `Email: \`${escapeMarkdown(email)}\``,
-    `Expires: \`${formatExpiry(expiryTime)}\``,
-    `Remaining: *${days} ${dayLabel}*`
-  ].filter(Boolean).join('\n');
-}
-
-function emailKey(value) {
-  return typeof value === 'string' ? value.trim().toLowerCase() : '';
-}
-
-function normaliseClientLinks(links) {
-  if (!Array.isArray(links)) return [];
-  return [...new Set(
-    links
-      .filter((link) => typeof link === 'string')
-      .map((link) => link.trim())
-      .filter((link) => /^vless:\/\//i.test(link))
-  )].sort();
-}
-
-function cachedClientLinks(value) {
-  if (typeof value !== 'string' || !value.trim()) return [];
-  try {
-    return normaliseClientLinks(JSON.parse(value));
-  } catch {
-    return [];
-  }
-}
-
-function clientLinkMessage(email, server, link) {
-  return [
-    '*Your VLESS Key link*',
-    '',
-    serverLine(server),
-    `Email: \`${escapeMarkdown(email)}\``,
-    '',
-    'Import or Paste this link into your VLESS client:',
-    `\`${escapeMarkdown(link)}\``
-  ].filter(Boolean).join('\n');
-}
-
-function panelErrorMessage(error) {
-  if (error instanceof ThreeXuiApiError) return error.toPublicMessage();
-  return 'The scheduled panel audit could not be completed.';
-}
-
-function createAuditResult(now, multiServerMode) {
-  const result = {
-    success: false,
-    skipped: false,
-    startedAt: new Date(now).toISOString(),
-    completedAt: null,
-    clientsFetched: 0,
-    clientsTracked: 0,
-    notificationsSent: 0,
-    invalidClients: 0,
-    clientDetailsFetched: 0,
-    clientDetailsFailed: 0,
-    clientLinksFetched: 0,
-    clientLinksFailed: 0,
-    clientLinksUpdated: 0
-  };
-  if (multiServerMode) {
-    result.serversConfigured = 0;
-    result.serversAudited = 0;
-    result.serversFailed = 0;
-  }
-  return result;
-}
+const { AuditService } = require('./tracker/auditService');
+const { LinkDeliveryService, clientLinkMessage } = require('./tracker/linkDeliveryService');
+const {
+  NotificationPolicy,
+  isValidTelegramId,
+  normaliseEnabled,
+  normaliseExpiryTime,
+  remainingDays
+} = require('./tracker/notificationPolicy');
+const { PanelSourceFactory } = require('./tracker/panelSourceFactory');
+const { CoalescingAuditGuard, KeyedRunGuard } = require('./tracker/runGuards');
+const { TestNotificationService } = require('./tracker/testNotificationService');
 
 /**
- * Audits every enabled database server independently. A panel account only
- * ever reads and writes state under its own server id, so an email or tgId on
- * two panels cannot suppress or redirect the other panel's notification.
+ * Application-facing facade for tracker operations. The implementation is
+ * composed from focused services so audit, notification, cache, link-delivery,
+ * and concurrency rules can change independently.
  */
 class TrackerEngine {
   constructor(options = {}) {
     const legacySourcesProvided = typeof options.listClients === 'function' || typeof options.getClientDetails === 'function';
     this.multiServerMode = !legacySourcesProvided;
-    this.listClients = options.listClients || fetchClients;
-    this.getClientDetails = options.getClientDetails || fetchClientDetails;
-    this.getClientLinks = options.getClientLinks || fetchClientLinks;
-    this.listServers = options.listServers || listTrackedServers;
-    this.listClientStatesForServer = options.listClientStatesForServer || listClientStatesForServer;
-    this.createPanelService = options.createPanelService || createThreeXuiService;
-    this.getState = options.getState || getClientState;
-    this.saveState = options.saveState || upsertClientState;
-    this.notify = options.notify || sendDirectMessage;
-    this.logger = options.logger || console;
     this.now = options.now || (() => Date.now());
-    this.twoFactorCode = options.twoFactorCode || (() => process.env.THREEXUI_TWO_FACTOR_CODE);
-    this.auditInProgress = false;
-    this.followUpAuditServerIds = new Set();
-    this.testNotificationInProgress = false;
-    this.linkDeliveryServerIds = new Set();
+    this.logger = options.logger || console;
+
+    const sourceFactory = new PanelSourceFactory({
+      multiServerMode: this.multiServerMode,
+      listClients: options.listClients || fetchClients,
+      getClientDetails: options.getClientDetails || fetchClientDetails,
+      getClientLinks: options.getClientLinks || fetchClientLinks,
+      createPanelService: options.createPanelService || createThreeXuiService,
+      twoFactorCode: options.twoFactorCode || (() => process.env.THREEXUI_TWO_FACTOR_CODE)
+    });
+    const notify = options.notify || sendDirectMessage;
+    const listServers = options.listServers || listTrackedServers;
+    const notificationPolicy = new NotificationPolicy({
+      now: this.now,
+      notify,
+      multiServerMode: this.multiServerMode
+    });
+
+    this.auditService = new AuditService({
+      multiServerMode: this.multiServerMode,
+      listServers,
+      sourceFactory,
+      deleteClientStatesAbsentFromPanel: options.deleteClientStatesAbsentFromPanel || deleteClientStatesAbsentFromPanel,
+      getState: options.getState || getClientState,
+      saveState: options.saveState || upsertClientState,
+      notificationPolicy,
+      logger: this.logger,
+      now: this.now
+    });
+    this.testNotificationService = new TestNotificationService({
+      multiServerMode: this.multiServerMode,
+      listServers,
+      sourceFactory,
+      notify,
+      logger: this.logger
+    });
+    this.linkDeliveryService = new LinkDeliveryService({
+      listClientStatesForServer: options.listClientStatesForServer || listClientStatesForServer,
+      notify
+    });
+    this.auditGuard = new CoalescingAuditGuard();
+    this.operationGuard = new KeyedRunGuard();
     this.status = {
       running: false,
       lastStartedAt: null,
@@ -199,156 +94,6 @@ class TrackerEngine {
     };
   }
 
-  async getPanelSource(server) {
-    if (!this.multiServerMode) {
-      return {
-        clients: await this.listClients({ twoFactorCode: this.twoFactorCode() }),
-        getClientDetails: (email) => this.getClientDetails(email, { twoFactorCode: this.twoFactorCode() }),
-        getClientLinks: (email) => this.getClientLinks(email, { twoFactorCode: this.twoFactorCode() })
-      };
-    }
-
-    const panel = await this.createPanelService({
-      baseUrl: server.base_url,
-      bearerToken: server.bearer_token,
-      username: server.username,
-      password: server.password
-    });
-    return {
-      clients: await panel.listClients({ twoFactorCode: this.twoFactorCode() }),
-      getClientDetails: (email) => panel.getClientDetails(email, { twoFactorCode: this.twoFactorCode() }),
-      getClientLinks: (email) => panel.getClientLinks(email, { twoFactorCode: this.twoFactorCode() })
-    };
-  }
-
-  async getPreviousState(server, clientId) {
-    return this.multiServerMode ? this.getState(server.id, clientId) : this.getState(clientId);
-  }
-
-  async saveClientState(server, clientId, tgId, email, expiryTime, isEnabled, isExpiredNotified, lastExpiryReminderDay, vlessLinks) {
-    if (this.multiServerMode) {
-      return this.saveState(
-        server.id, clientId, tgId, email, expiryTime, isEnabled,
-        isExpiredNotified, lastExpiryReminderDay, vlessLinks
-      );
-    }
-    return this.saveState(
-      clientId, tgId, email, expiryTime, isEnabled,
-      isExpiredNotified, lastExpiryReminderDay, vlessLinks
-    );
-  }
-
-  async auditClient(server, client, result, refreshedLinks) {
-    const clientId = typeof client.email === 'string' ? client.email.trim() : '';
-    if (!clientId) return;
-
-    const email = client.email || '';
-    const tgId = isValidTelegramId(client.tgId) ? String(client.tgId).trim() : '';
-    const hasTelegramRecipient = Boolean(tgId);
-    const expiryTime = normaliseExpiryTime(client.expiryTime);
-    const isEnabled = normaliseEnabled(client.enable);
-    const previous = await this.getPreviousState(server, clientId);
-    const previousLinks = cachedClientLinks(previous?.vless_links);
-    const currentLinks = refreshedLinks === undefined ? previousLinks : normaliseClientLinks(refreshedLinks);
-    const linksChanged = refreshedLinks !== undefined && JSON.stringify(previousLinks) !== JSON.stringify(currentLinks);
-    const vlessLinks = refreshedLinks === undefined && previous?.vless_links === undefined
-      ? null
-      : JSON.stringify(currentLinks);
-    const previousTelegramId = String(previous?.telegram_id ?? '').trim();
-    const telegramChanged = Boolean(
-      previous && previous.telegram_id !== undefined && previousTelegramId !== tgId
-    );
-    const expiryChanged = Boolean(previous && Number(previous.expiry_time) !== expiryTime);
-    const hasChanged = Boolean(
-      previous &&
-      (expiryChanged || Number(previous.is_enabled) !== Number(isEnabled))
-    );
-    const now = this.now();
-    const isExpired = expiryTime > 0 && now >= expiryTime;
-    let isExpiredNotified = previous ? Number(previous.is_expired_notified) : 0;
-    let lastExpiryReminderDay = previous?.last_expiry_reminder_day || null;
-    const notificationServer = this.multiServerMode ? server : undefined;
-
-    if (linksChanged) result.clientLinksUpdated += 1;
-
-    if (!hasTelegramRecipient) {
-      // Keep the panel's unbound state too. If the customer later adds a tgId,
-      // the next audit will use that new recipient rather than stale data.
-      isExpiredNotified = 0;
-      lastExpiryReminderDay = null;
-    } else {
-      if (telegramChanged) lastExpiryReminderDay = null;
-      if (isExpired && (!isExpiredNotified || telegramChanged)) {
-        if (await this.notify(tgId, expiredMessage(email, expiryTime, notificationServer))) {
-          isExpiredNotified = 1;
-          result.notificationsSent += 1;
-        }
-      } else if (hasChanged) {
-        if (await this.notify(tgId, updatedMessage(email, expiryTime, isEnabled, notificationServer))) {
-          result.notificationsSent += 1;
-        }
-        if (expiryTime > this.now()) isExpiredNotified = 0;
-        if (expiryChanged) lastExpiryReminderDay = null;
-      } else if (expiryTime > now) {
-        const days = remainingDays(expiryTime, now);
-        const today = reminderDay(now);
-        if (days >= 1 && days <= 3 && lastExpiryReminderDay !== today) {
-          if (await this.notify(tgId, expiringSoonMessage(email, expiryTime, days, notificationServer))) {
-            result.notificationsSent += 1;
-          }
-          // Mark the attempted daily reminder even if Telegram is temporarily unavailable.
-          // This prevents a frequent audit schedule from repeatedly messaging one user.
-          lastExpiryReminderDay = today;
-        } else if (days > 3) {
-          lastExpiryReminderDay = null;
-        }
-      }
-    }
-
-    await this.saveClientState(
-      server, clientId, tgId, email, expiryTime, isEnabled,
-      isExpiredNotified, lastExpiryReminderDay, vlessLinks
-    );
-    result.clientsTracked += 1;
-  }
-
-  async auditServer(server, result) {
-    const source = await this.getPanelSource(server);
-    if (!Array.isArray(source.clients)) {
-      throw new Error('Panel client response did not contain an array.');
-    }
-
-    result.clientsFetched += source.clients.length;
-    for (const clientSummary of source.clients) {
-      if (!clientSummary || typeof clientSummary !== 'object' || typeof clientSummary.email !== 'string' || !clientSummary.email.trim()) {
-        result.invalidClients += 1;
-        continue;
-      }
-
-      try {
-        const details = await source.getClientDetails(clientSummary.email);
-        // The detail response is authoritative because list endpoints may omit tgId.
-        const client = { ...clientSummary, ...details, email: details.email || clientSummary.email };
-        result.clientDetailsFetched += 1;
-        let refreshedLinks;
-        if (emailKey(details?.email) === emailKey(clientSummary.email)) {
-          try {
-            refreshedLinks = await source.getClientLinks(details.email);
-            result.clientLinksFetched += 1;
-          } catch {
-            // Preserve the last known cache if the panel link endpoint is temporarily unavailable.
-            result.clientLinksFailed += 1;
-          }
-        } else {
-          result.clientLinksFailed += 1;
-        }
-        await this.auditClient(server, client, result, refreshedLinks);
-      } catch {
-        result.clientDetailsFailed += 1;
-      }
-    }
-  }
-
   finishAudit(result, startedAt, errorMessage = null) {
     result.completedAt = new Date(this.now()).toISOString();
     this.status = {
@@ -362,223 +107,41 @@ class TrackerEngine {
     return result;
   }
 
-  async runAudit({ serverIds } = {}) {
-    if (this.auditInProgress) {
-      if (this.multiServerMode && Array.isArray(serverIds)) {
-        for (const serverId of serverIds) this.followUpAuditServerIds.add(Number(serverId));
-      }
-      return { ...this.status.lastResult, skipped: true };
-    }
-
-    this.auditInProgress = true;
+  async performAudit({ serverIds } = {}) {
     const startedAt = new Date(this.now()).toISOString();
-    const result = createAuditResult(this.now(), this.multiServerMode);
-    result.startedAt = startedAt;
     this.status = { ...this.status, running: true, lastStartedAt: startedAt, lastError: null };
-
-    try {
-      let servers = this.multiServerMode
-        ? await this.listServers()
-        : [{ id: 'legacy', name: 'Default server' }];
-      if (!Array.isArray(servers)) throw new Error('Server configuration did not contain an array.');
-
-      if (this.multiServerMode && Array.isArray(serverIds) && serverIds.length) {
-        const requestedIds = new Set(serverIds.map((serverId) => Number(serverId)));
-        servers = servers.filter((server) => requestedIds.has(Number(server.id)));
-      }
-
-      if (this.multiServerMode) {
-        result.serversConfigured = servers.length;
-        if (!servers.length) {
-          this.finishAudit(result, startedAt, 'No enabled servers are configured.');
-          this.logger.info('Audit skipped: no enabled servers are configured.');
-          return result;
-        }
-      }
-
-      const failures = [];
-      for (const server of servers) {
-        try {
-          await this.auditServer(server, result);
-          if (this.multiServerMode) result.serversAudited += 1;
-        } catch (error) {
-          if (!this.multiServerMode) throw error;
-          result.serversFailed += 1;
-          failures.push(`${serverLabel(server) || 'Configured server'}: ${panelErrorMessage(error)}`);
-          this.logger.error(`Audit failed for ${serverLabel(server) || 'a configured server'}: ${panelErrorMessage(error)}`);
-        }
-      }
-
-      result.success = failures.length === 0;
-      const errorMessage = failures.length ? failures.join(' ') : null;
-      this.finishAudit(result, startedAt, errorMessage);
-      this.logger.info(`Audit complete: synchronized ${result.clientsTracked} VLESS client(s).`);
-      return result;
-    } catch (error) {
-      const message = panelErrorMessage(error);
-      this.finishAudit(result, startedAt, message);
-      this.logger.error(`Audit failed: ${message}`);
-      return result;
-    } finally {
-      this.auditInProgress = false;
-      if (this.followUpAuditServerIds.size) {
-        const queuedServerIds = [...this.followUpAuditServerIds];
-        this.followUpAuditServerIds.clear();
-        setImmediate(() => this.runAudit({ serverIds: queuedServerIds }));
-      }
-    }
+    const { result, errorMessage } = await this.auditService.run({ serverIds, startedAt });
+    return this.finishAudit(result, startedAt, errorMessage);
   }
 
-  /** Send one clearly labeled test message to each panel-bound recipient. */
+  async runAudit({ serverIds } = {}) {
+    return this.auditGuard.run({
+      serverIds,
+      execute: (requestedServerIds) => this.performAudit({ serverIds: requestedServerIds }),
+      skippedResult: () => ({ ...this.status.lastResult, skipped: true })
+    });
+  }
+
   async sendTestNotifications() {
-    if (this.testNotificationInProgress) {
-      return { success: false, skipped: true, recipients: 0, sent: 0, failed: 0, detailFailures: 0 };
-    }
-
-    this.testNotificationInProgress = true;
-    try {
-      const servers = this.multiServerMode
-        ? await this.listServers()
-        : [{ id: 'legacy', name: 'Default server' }];
-      if (!Array.isArray(servers)) throw new Error('Server configuration did not contain an array.');
-
-      const recipients = new Map();
-      let detailFailures = 0;
-      let serversFailed = 0;
-      for (const server of servers) {
-        try {
-          const source = await this.getPanelSource(server);
-          if (!Array.isArray(source.clients)) throw new Error('Panel client response did not contain an array.');
-          for (const clientSummary of source.clients) {
-            if (!clientSummary || typeof clientSummary.email !== 'string' || !clientSummary.email.trim()) continue;
-            try {
-              const details = await source.getClientDetails(clientSummary.email);
-              if (isValidTelegramId(details.tgId)) {
-                const recipientId = String(details.tgId).trim();
-                const key = this.multiServerMode ? `${server.id}:${recipientId}` : recipientId;
-                recipients.set(key, { recipientId, server });
-              }
-            } catch {
-              detailFailures += 1;
-            }
-          }
-        } catch (error) {
-          if (!this.multiServerMode) throw error;
-          serversFailed += 1;
-          this.logger.error(`Test notification lookup failed for ${serverLabel(server) || 'a configured server'}: ${panelErrorMessage(error)}`);
-        }
-      }
-
-      let sent = 0;
-      let failed = 0;
-      for (const { recipientId, server } of recipients.values()) {
-        const message = [
-          '*3X-UI tracker test notification*',
-          '',
-          this.multiServerMode ? serverLine(server) : null,
-          'This confirms that Telegram notifications are configured correctly.',
-          'No action is required.'
-        ].filter(Boolean).join('\n');
-        if (await this.notify(recipientId, message)) sent += 1;
-        else failed += 1;
-      }
-
-      const result = {
-        success: serversFailed === 0,
-        skipped: false,
-        recipients: recipients.size,
-        sent,
-        failed,
-        detailFailures
-      };
-      if (this.multiServerMode) result.serversFailed = serversFailed;
-      this.logger.info(`Test notification run complete: ${sent}/${recipients.size} delivered.`);
-      return result;
-    } finally {
-      this.testNotificationInProgress = false;
-    }
+    return this.operationGuard.run('test-notifications', {
+      execute: () => this.testNotificationService.send(),
+      skippedResult: () => ({ success: false, skipped: true, recipients: 0, sent: 0, failed: 0, detailFailures: 0 })
+    });
   }
 
-  /**
-   * Send cached VLESS link(s) for clients belonging to exactly one saved panel.
-   * The cache is refreshed during scheduled audits, so delivery never asks the
-   * panel for credentials. The browser receives delivery totals only.
-   */
-  async sendClientLinks(server, { clientEmail } = {}) {
+  async sendClientLinks(server, options = {}) {
     const serverId = Number(server?.id);
     if (!Number.isSafeInteger(serverId) || serverId < 1) {
-      throw new Error('A saved server is required for client link delivery.');
+      return this.linkDeliveryService.send(server, options);
     }
-    const requestedEmail = clientEmail === undefined ? null : emailKey(clientEmail);
-    if (clientEmail !== undefined && !requestedEmail) {
-      throw new Error('A client email is required for individual link delivery.');
-    }
-    if (this.linkDeliveryServerIds.has(serverId)) {
-      return {
+    return this.operationGuard.run(`link-delivery:${serverId}`, {
+      execute: () => this.linkDeliveryService.send(server, options),
+      skippedResult: () => ({
         success: false, skipped: true, clientsChecked: 0, linksPrepared: 0,
         sent: 0, failed: 0, skippedClients: 0, missingTelegram: 0,
         validationFailures: 0, detailFailures: 0, linkFailures: 0
-      };
-    }
-
-    this.linkDeliveryServerIds.add(serverId);
-    try {
-      const clients = await this.listClientStatesForServer(serverId);
-      if (!Array.isArray(clients)) {
-        throw new Error('Stored client link data did not contain a client array.');
-      }
-
-      const result = {
-        success: true,
-        skipped: false,
-        clientsChecked: 0,
-        linksPrepared: 0,
-        sent: 0,
-        failed: 0,
-        skippedClients: 0,
-        missingTelegram: 0,
-        validationFailures: 0,
-        detailFailures: 0,
-        linkFailures: 0
-      };
-      const checkedEmails = new Set();
-
-      for (const client of clients) {
-        const storedEmail = emailKey(client?.email);
-        if (!storedEmail || checkedEmails.has(storedEmail)) continue;
-        if (requestedEmail && storedEmail !== requestedEmail) continue;
-        checkedEmails.add(storedEmail);
-        result.clientsChecked += 1;
-
-        if (!isValidTelegramId(client.telegram_id)) {
-          result.missingTelegram += 1;
-          result.skippedClients += 1;
-          continue;
-        }
-
-        const links = cachedClientLinks(client.vless_links);
-        if (!links.length) {
-          result.linkFailures += 1;
-          result.skippedClients += 1;
-          continue;
-        }
-
-        result.linksPrepared += links.length;
-        const recipientId = String(client.telegram_id).trim();
-        for (const link of links) {
-          try {
-            if (await this.notify(recipientId, clientLinkMessage(client.email, server, link))) result.sent += 1;
-            else result.failed += 1;
-          } catch {
-            result.failed += 1;
-          }
-        }
-      }
-
-      return result;
-    } finally {
-      this.linkDeliveryServerIds.delete(serverId);
-    }
+      })
+    });
   }
 }
 

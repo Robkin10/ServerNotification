@@ -83,10 +83,14 @@ function render(data) {
   elements.lastSuccess.textContent = formatDate(tracker.lastSuccessAt);
   const auditedServers = tracker.lastResult?.serversAudited;
   const serverDescription = auditedServers === undefined ? '' : ` across ${auditedServers} server${auditedServers === 1 ? '' : 's'}`;
+  const clientsRemoved = Number(tracker.lastResult?.clientsRemoved) || 0;
+  const removalDescription = clientsRemoved
+    ? ` · ${clientsRemoved} stale client key${clientsRemoved === 1 ? '' : 's'} removed`
+    : '';
   elements.auditResult.textContent = tracker.running
     ? 'Audit currently running'
     : tracker.lastResult
-      ? `${tracker.lastResult.clientsTracked} clients checked${serverDescription} · ${tracker.lastResult.notificationsSent} notifications sent`
+      ? `${tracker.lastResult.clientsTracked} clients checked${serverDescription} · ${tracker.lastResult.notificationsSent} notifications sent${removalDescription}`
       : 'Waiting for first audit';
   elements.error.hidden = !tracker.lastError;
   elements.error.classList.remove('success-message');

@@ -49,7 +49,8 @@ test('tracks Telegram-bound clients and sends a single expiry notification', asy
     clientDetailsFailed: 0,
     clientLinksFetched: 2,
     clientLinksFailed: 0,
-    clientLinksUpdated: 2
+    clientLinksUpdated: 2,
+    clientsRemoved: 0
   });
   assert.equal(notifications.length, 1);
   assert.match(notifications[0][1], /VLESS key expired/);
@@ -231,6 +232,7 @@ test('isolates state and notifications for clients on different configured serve
     }),
     getState: async () => undefined,
     saveState: async (...args) => saved.push(args),
+    deleteClientStatesAbsentFromPanel: async () => 0,
     notify: async (...args) => {
       notifications.push(args);
       return true;
@@ -252,6 +254,102 @@ test('isolates state and notifications for clients on different configured serve
   ]);
   assert.match(notifications[0][1], /Server: `Alpha \/ One`/);
   assert.match(notifications[1][1], /Server: `Beta \/ Two`/);
+});
+
+test('removes tracked VLESS keys that are absent from a complete panel client list', async () => {
+  const removed = [];
+  const engine = new TrackerEngine({
+    logger: { info() {}, error() {} },
+    listServers: async () => [
+      { id: 31, group_name: 'Production', name: 'Panel', base_url: 'https://panel.example.test', bearer_token: 'a', username: 'u', password: 'p' }
+    ],
+    createPanelService: async () => ({
+      listClients: async () => [{ email: 'active@example.test' }],
+      getClientDetails: async () => ({ email: 'active@example.test', enable: true }),
+      getClientLinks: async () => []
+    }),
+    getState: async () => undefined,
+    saveState: async () => {},
+    deleteClientStatesAbsentFromPanel: async (serverId, clientIds) => {
+      removed.push({ serverId, clientIds });
+      return 2;
+    }
+  });
+
+  const result = await engine.runAudit();
+
+  assert.equal(result.success, true);
+  assert.equal(result.clientsRemoved, 2);
+  assert.deepEqual(removed, [{ serverId: 31, clientIds: ['active@example.test'] }]);
+});
+
+test('removes all tracked VLESS keys for a server when its valid panel list is empty', async () => {
+  const removed = [];
+  const engine = new TrackerEngine({
+    logger: { info() {}, error() {} },
+    listServers: async () => [
+      { id: 34, group_name: 'Production', name: 'Empty panel', base_url: 'https://panel.example.test', bearer_token: 'a', username: 'u', password: 'p' }
+    ],
+    createPanelService: async () => ({
+      listClients: async () => []
+    }),
+    deleteClientStatesAbsentFromPanel: async (serverId, clientIds) => {
+      removed.push({ serverId, clientIds });
+      return 3;
+    }
+  });
+
+  const result = await engine.runAudit();
+
+  assert.equal(result.success, true);
+  assert.equal(result.clientsRemoved, 3);
+  assert.deepEqual(removed, [{ serverId: 34, clientIds: [] }]);
+});
+
+test('preserves tracked VLESS keys when the panel client list cannot be trusted', async () => {
+  const removed = [];
+  const engine = new TrackerEngine({
+    logger: { info() {}, error() {} },
+    listServers: async () => [
+      { id: 32, group_name: 'Production', name: 'Panel', base_url: 'https://panel.example.test', bearer_token: 'a', username: 'u', password: 'p' }
+    ],
+    createPanelService: async () => ({
+      listClients: async () => [{ email: 'active@example.test' }, { id: 'missing-email' }],
+      getClientDetails: async () => ({ email: 'active@example.test', enable: true }),
+      getClientLinks: async () => []
+    }),
+    getState: async () => undefined,
+    saveState: async () => {},
+    deleteClientStatesAbsentFromPanel: async (...args) => removed.push(args)
+  });
+
+  const result = await engine.runAudit();
+
+  assert.equal(result.success, true);
+  assert.equal(result.invalidClients, 1);
+  assert.equal(result.clientsRemoved, 0);
+  assert.deepEqual(removed, []);
+});
+
+test('preserves tracked VLESS keys when a panel client-list request fails', async () => {
+  const removed = [];
+  const engine = new TrackerEngine({
+    logger: { info() {}, error() {} },
+    listServers: async () => [
+      { id: 33, group_name: 'Production', name: 'Panel', base_url: 'https://panel.example.test', bearer_token: 'a', username: 'u', password: 'p' }
+    ],
+    createPanelService: async () => ({
+      listClients: async () => { throw new Error('Panel unavailable'); }
+    }),
+    deleteClientStatesAbsentFromPanel: async (...args) => removed.push(args)
+  });
+
+  const result = await engine.runAudit();
+
+  assert.equal(result.success, false);
+  assert.equal(result.serversFailed, 1);
+  assert.equal(result.clientsRemoved, 0);
+  assert.deepEqual(removed, []);
 });
 
 test('sends test notifications separately for the same chat on each server', async () => {

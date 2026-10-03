@@ -271,6 +271,42 @@ function listClientStatesForServer(serverId) {
     ORDER BY email COLLATE NOCASE ASC`, [Number(serverId)]);
 }
 
+/**
+ * Remove state that is no longer present in one panel's authoritative client
+ * list. Both email and the legacy client_id are considered because older rows
+ * may not have a usable email value. The caller must only invoke this after a
+ * complete, valid panel list has been received.
+ */
+async function deleteClientStatesAbsentFromPanel(serverId, clientIds) {
+  const numericServerId = Number(serverId);
+  if (!Number.isSafeInteger(numericServerId) || numericServerId < 1) {
+    throw new TypeError('A saved server is required to reconcile client state.');
+  }
+  if (!Array.isArray(clientIds)) {
+    throw new TypeError('Panel client identifiers must be an array.');
+  }
+
+  const panelClientIds = [...new Set(clientIds
+    .map((clientId) => String(clientId ?? '').trim().toLowerCase())
+    .filter(Boolean))];
+
+  if (!panelClientIds.length) {
+    const result = await run('DELETE FROM client_state WHERE server_id = ?', [numericServerId]);
+    return result.changes;
+  }
+
+  const placeholders = panelClientIds.map(() => '?').join(', ');
+  const result = await run(`DELETE FROM client_state
+    WHERE server_id = ?
+      AND LOWER(TRIM(COALESCE(email, ''))) NOT IN (${placeholders})
+      AND LOWER(TRIM(client_id)) NOT IN (${placeholders})`, [
+    numericServerId,
+    ...panelClientIds,
+    ...panelClientIds
+  ]);
+  return result.changes;
+}
+
 /** Attach preserved single-panel state to the one-time imported default server. */
 function claimLegacyClientStates(serverId) {
   return run('UPDATE client_state SET server_id = ? WHERE server_id = 0', [Number(serverId)]);
@@ -328,6 +364,7 @@ module.exports = {
   claimLegacyClientStates,
   closeDatabase,
   createTrackedServer,
+  deleteClientStatesAbsentFromPanel,
   deleteTrackedServer,
   getClientState,
   getClientSummary,

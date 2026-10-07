@@ -1,0 +1,32 @@
+name: telegram-tracker
+
+services:
+  tracker:
+    build:
+      context: ./app
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    init: true
+    env_file:
+      - ./app/.env
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: "3000"
+      TRACKER_DATABASE_PATH: /data/tracker.db
+    ports:
+      # The dashboard is local-only by default. Set TRACKER_BIND_ADDRESS=0.0.0.0
+      # in the shell when starting Compose if a reverse proxy is not being used.
+      - "${TRACKER_BIND_ADDRESS:-127.0.0.1}:${TRACKER_PORT:-3000}:3000"
+    volumes:
+      - ./data:/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          node -e "require('http').get('http://127.0.0.1:3000/api/health', r =>
+          process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3

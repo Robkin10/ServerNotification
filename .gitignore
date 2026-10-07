@@ -1,4 +1,4 @@
 .env
-vless_tracker.db
+data/*.db
 node_modules/
 dist/

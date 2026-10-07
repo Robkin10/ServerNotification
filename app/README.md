@@ -4,7 +4,7 @@ A Node.js service that reads VLESS clients from one or more 3X-UI panels on a sc
 
 ## Setup
 
-1. Copy `.env.example` to `.env`; set `DASHBOARD_USER`, `DASHBOARD_PASS`, and `NOTIFICATION_TELEGRAM_BOT_TOKEN` for a dedicated outbound-only notification bot. Do not commit `.env`.
+1. Copy `.env.example` to `.env`; set `DASHBOARD_USER`, `DASHBOARD_PASS`, and `NOTIFICATION_TELEGRAM_BOT_TOKEN` for a dedicated outbound-only notification bot. Do not commit `.env`. For the Docker layout, use `app/.env` and follow [DEPLOYMENT.md](DEPLOYMENT.md).
 2. Change `DASHBOARD_USER` and `DASHBOARD_PASS`; the documented defaults are for local development only.
 3. Run `npm install`, then `npm start`.
 4. Open `http://HOST:PORT`, authenticate, and use **Add Server details** to create each panel connection. Enter a group name to organize related servers.

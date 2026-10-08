@@ -80,6 +80,10 @@ test('shows a login screen and protects dashboard data with a session', async ()
     assert.equal(unauthenticatedApi.status, 401);
     assert.equal(JSON.parse(unauthenticatedApi.body).success, false);
 
+    const liveness = await request(port, '/healthz');
+    assert.equal(liveness.status, 200);
+    assert.equal(liveness.body, 'ok');
+
     const loginPage = await request(port, '/login');
     assert.equal(loginPage.status, 200);
     assert.match(loginPage.body, /Sign in to the tracker/);

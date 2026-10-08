@@ -2,13 +2,13 @@ name: telegram-tracker
 
 services:
   tracker:
-    build:
-      context: ./app
-      dockerfile: Dockerfile
+    # CI publishes this image. IMAGE_TAG is set to an immutable commit tag by
+    # the deployment workflow, so a restart cannot accidentally change code.
+    image: "${DOCKER_IMAGE:-robkin/3xui-telegrambot}:${IMAGE_TAG:-latest}"
     restart: unless-stopped
     init: true
     env_file:
-      - ./app/.env
+      - ${TRACKER_ENV_FILE:-./app/.env}
     environment:
       NODE_ENV: production
       HOST: 0.0.0.0
@@ -24,7 +24,7 @@ services:
       test:
         - CMD-SHELL
         - >-
-          node -e "require('http').get('http://127.0.0.1:3000/api/health', r =>
+          node -e "require('http').get('http://127.0.0.1:3000/healthz', r =>
           process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"
       interval: 30s
       timeout: 5s

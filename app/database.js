@@ -1,8 +1,14 @@
 const path = require('path');
+const fs = require('fs');
 const sqlite3 = require('sqlite3').verbose();
 
-// Keep the database next to the application so the service has a predictable state file.
-const databasePath = path.join(__dirname, 'vless_tracker.db');
+// State is deliberately kept outside the application source. This lets an image
+// upgrade replace /app without replacing credentials or notification history.
+const configuredDatabasePath = process.env.TRACKER_DATABASE_PATH?.trim();
+const databasePath = configuredDatabasePath
+  ? path.resolve(configuredDatabasePath)
+  : path.resolve(__dirname, '..', 'data', 'tracker.db');
+fs.mkdirSync(path.dirname(databasePath), { recursive: true, mode: 0o700 });
 const db = new sqlite3.Database(databasePath);
 
 function run(sql, parameters = []) {

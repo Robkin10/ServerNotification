@@ -314,6 +314,12 @@ function createApp({
     });
   });
 
+  // Deliberately minimal unauthenticated liveness probe for Docker. Detailed
+  // tracker status remains behind the authenticated /api/health route.
+  app.get('/healthz', (request, response) => {
+    response.status(200).type('text/plain').send('ok');
+  });
+
   app.use((request, response, next) => {
     const session = sessionStore.get(sessionTokenFrom(request));
     if (session) {

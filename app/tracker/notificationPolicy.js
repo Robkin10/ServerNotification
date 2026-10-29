@@ -97,6 +97,7 @@ class NotificationPolicy {
     const isExpired = expiryTime > 0 && now >= expiryTime;
     let isExpiredNotified = previous ? Number(previous.is_expired_notified) : 0;
     let lastExpiryReminderDay = previous?.last_expiry_reminder_day || null;
+    let lastNotificationType = previous?.last_notification_type || null;
     let notificationsSent = 0;
     const notificationServer = this.multiServerMode ? server : undefined;
 
@@ -104,15 +105,18 @@ class NotificationPolicy {
       // A later panel binding should start with fresh notification state.
       isExpiredNotified = 0;
       lastExpiryReminderDay = null;
+      lastNotificationType = null;
     } else {
       if (telegramChanged) lastExpiryReminderDay = null;
       if (isExpired && (!isExpiredNotified || telegramChanged)) {
         if (await this.notify(tgId, expiredMessage(email, expiryTime, notificationServer))) {
           isExpiredNotified = 1;
+          lastNotificationType = 'expired';
           notificationsSent += 1;
         }
       } else if (hasChanged) {
         if (await this.notify(tgId, updatedMessage(email, expiryTime, isEnabled, notificationServer))) {
+          lastNotificationType = 'configuration_updated';
           notificationsSent += 1;
         }
         if (expiryTime > now) isExpiredNotified = 0;
@@ -122,6 +126,7 @@ class NotificationPolicy {
         const today = notificationDay(now);
         if (days >= 1 && days <= 3 && lastExpiryReminderDay !== today) {
           if (await this.notify(tgId, expiringSoonMessage(email, expiryTime, days, notificationServer))) {
+            lastNotificationType = `expires_in_${days}_days`;
             notificationsSent += 1;
           }
           // Record the attempt so a frequent audit cannot repeatedly message one user.
@@ -138,6 +143,7 @@ class NotificationPolicy {
       isEnabled,
       isExpiredNotified,
       lastExpiryReminderDay,
+      lastNotificationType,
       notificationsSent,
       tgId
     };

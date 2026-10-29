@@ -63,12 +63,12 @@ class AuditService {
     if (this.multiServerMode) {
       return this.saveState(
         server.id, clientId, state.tgId, state.email, state.expiryTime, state.isEnabled,
-        state.isExpiredNotified, state.lastExpiryReminderDay, vlessLinks
+        state.isExpiredNotified, state.lastExpiryReminderDay, state.lastNotificationType, vlessLinks
       );
     }
     return this.saveState(
       clientId, state.tgId, state.email, state.expiryTime, state.isEnabled,
-      state.isExpiredNotified, state.lastExpiryReminderDay, vlessLinks
+      state.isExpiredNotified, state.lastExpiryReminderDay, state.lastNotificationType, vlessLinks
     );
   }
 

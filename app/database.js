@@ -49,6 +49,7 @@ async function createClientStateTable() {
     is_enabled INTEGER,
     is_expired_notified INTEGER DEFAULT 0,
     last_expiry_reminder_day TEXT,
+    last_notification_type TEXT,
     vless_links TEXT,
     PRIMARY KEY (server_id, client_id)
   )`);
@@ -72,11 +73,15 @@ async function migrateClientStateTable() {
     if (!columns.some((column) => column.name === 'vless_links')) {
       await run('ALTER TABLE client_state ADD COLUMN vless_links TEXT');
     }
+    if (!columns.some((column) => column.name === 'last_notification_type')) {
+      await run('ALTER TABLE client_state ADD COLUMN last_notification_type TEXT');
+    }
     await run('CREATE INDEX IF NOT EXISTS client_state_server_idx ON client_state(server_id)');
     return;
   }
 
   const hasReminderColumn = columns.some((column) => column.name === 'last_expiry_reminder_day');
+  const hasNotificationTypeColumn = columns.some((column) => column.name === 'last_notification_type');
   await run('BEGIN IMMEDIATE');
   try {
     await run('ALTER TABLE client_state RENAME TO client_state_legacy');
@@ -84,10 +89,11 @@ async function migrateClientStateTable() {
     await run(
       `INSERT INTO client_state (
         server_id, client_id, telegram_id, email, expiry_time, is_enabled,
-        is_expired_notified, last_expiry_reminder_day, vless_links
+        is_expired_notified, last_expiry_reminder_day, last_notification_type, vless_links
       )
       SELECT 0, vless_id, telegram_id, email, expiry_time, is_enabled,
-        is_expired_notified, ${hasReminderColumn ? 'last_expiry_reminder_day' : 'NULL'}, NULL
+        is_expired_notified, ${hasReminderColumn ? 'last_expiry_reminder_day' : 'NULL'},
+        ${hasNotificationTypeColumn ? 'last_notification_type' : 'NULL'}, NULL
       FROM client_state_legacy`
     );
     await run('DROP TABLE client_state_legacy');
@@ -240,13 +246,14 @@ function upsertClientState(
   isEnabled,
   isExpiredNotified,
   lastExpiryReminderDay = null,
+  lastNotificationType = null,
   vlessLinks = null
 ) {
   return run(
     `INSERT INTO client_state (
       server_id, client_id, telegram_id, email, expiry_time, is_enabled,
-      is_expired_notified, last_expiry_reminder_day, vless_links
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      is_expired_notified, last_expiry_reminder_day, last_notification_type, vless_links
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(server_id, client_id) DO UPDATE SET
       telegram_id = excluded.telegram_id,
       email = excluded.email,
@@ -254,6 +261,7 @@ function upsertClientState(
       is_enabled = excluded.is_enabled,
       is_expired_notified = excluded.is_expired_notified,
       last_expiry_reminder_day = excluded.last_expiry_reminder_day,
+      last_notification_type = excluded.last_notification_type,
       vless_links = excluded.vless_links`,
     [
       Number(serverId),
@@ -264,6 +272,7 @@ function upsertClientState(
       isEnabled ? 1 : 0,
       isExpiredNotified ? 1 : 0,
       lastExpiryReminderDay || null,
+      lastNotificationType || null,
       vlessLinks || null
     ]
   );
@@ -272,6 +281,14 @@ function upsertClientState(
 /** Cached credentials stay in the database and are never exposed to dashboard routes. */
 function listClientStatesForServer(serverId) {
   return all(`SELECT client_id, telegram_id, email, vless_links
+    FROM client_state
+    WHERE server_id = ?
+    ORDER BY email COLLATE NOCASE ASC`, [Number(serverId)]);
+}
+
+/** Minimal customer-recipient data for a server-scoped custom announcement. */
+function listClientAnnouncementRecipientsForServer(serverId) {
+  return all(`SELECT client_id, telegram_id, email
     FROM client_state
     WHERE server_id = ?
     ORDER BY email COLLATE NOCASE ASC`, [Number(serverId)]);
@@ -322,7 +339,7 @@ function claimLegacyClientStates(serverId) {
 function listClientStates() {
   return all(`SELECT
       c.server_id, c.client_id, c.telegram_id, c.email, c.expiry_time,
-      c.is_enabled, c.is_expired_notified, c.last_expiry_reminder_day,
+      c.is_enabled, c.is_expired_notified, c.last_expiry_reminder_day, c.last_notification_type,
       s.name AS server_name, g.name AS group_name
     FROM client_state c
     JOIN tracked_servers s ON s.id = c.server_id
@@ -376,6 +393,7 @@ module.exports = {
   getClientSummary,
   getTrackedServer,
   initializeDatabase,
+  listClientAnnouncementRecipientsForServer,
   listClientStates,
   listClientStatesForServer,
   listClientStatesForTelegram,

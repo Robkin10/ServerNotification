@@ -1,6 +1,7 @@
 const {
   deleteClientStatesAbsentFromPanel,
   getClientState,
+  listClientAnnouncementRecipientsForServer,
   listClientStatesForServer,
   listTrackedServers,
   upsertClientState
@@ -11,7 +12,8 @@ const {
   fetchClientLinks,
   fetchClients
 } = require('./panelApi');
-const { sendDirectMessage } = require('./telegram');
+const { sendDirectMessage, sendPlainTextMessage } = require('./telegram');
+const { AnnouncementService } = require('./tracker/announcementService');
 const { AuditService } = require('./tracker/auditService');
 const { LinkDeliveryService, clientLinkMessage } = require('./tracker/linkDeliveryService');
 const {
@@ -74,6 +76,10 @@ class TrackerEngine {
     this.linkDeliveryService = new LinkDeliveryService({
       listClientStatesForServer: options.listClientStatesForServer || listClientStatesForServer,
       notify
+    });
+    this.announcementService = new AnnouncementService({
+      listRecipientsForServer: options.listClientAnnouncementRecipientsForServer || listClientAnnouncementRecipientsForServer,
+      notify: options.notifyAnnouncement || sendPlainTextMessage
     });
     this.auditGuard = new CoalescingAuditGuard();
     this.operationGuard = new KeyedRunGuard();
@@ -140,6 +146,20 @@ class TrackerEngine {
         success: false, skipped: true, clientsChecked: 0, linksPrepared: 0,
         sent: 0, failed: 0, skippedClients: 0, missingTelegram: 0,
         validationFailures: 0, detailFailures: 0, linkFailures: 0
+      })
+    });
+  }
+
+  async sendCustomAnnouncement(server, options = {}) {
+    const serverId = Number(server?.id);
+    if (!Number.isSafeInteger(serverId) || serverId < 1) {
+      return this.announcementService.send(server, options);
+    }
+    return this.operationGuard.run(`announcement:${serverId}`, {
+      execute: () => this.announcementService.send(server, options),
+      skippedResult: () => ({
+        success: false, skipped: true, clientsChecked: 0, recipients: 0,
+        sent: 0, failed: 0, skippedClients: 0, missingTelegram: 0
       })
     });
   }

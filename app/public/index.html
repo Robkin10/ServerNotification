@@ -15,15 +15,18 @@
           <p class="eyebrow">3X-UI / VLESS OBSERVABILITY</p>
           <h1>Expiry &amp; change tracker</h1>
         </div>
-        <div class="actions">
+        <div class="header-controls">
+          <div class="header-utilities">
+            <span id="connection-status" class="status loading">Loading</span>
+            <button id="send-test-notification" class="secondary" type="button">Send test notification</button>
+            <button id="refresh" type="button">Update from 3X-UI</button>
+            <button id="logout" class="secondary" type="button">Sign out</button>
+          </div>
           <nav class="primary-nav" aria-label="Primary navigation">
             <a class="nav-link active" href="/" aria-current="page">Dashboard</a>
             <a class="nav-link" href="/servers">Servers</a>
+            <a class="nav-link" href="/announcements">Announcements</a>
           </nav>
-          <span id="connection-status" class="status loading">Loading</span>
-          <button id="send-test-notification" class="secondary" type="button">Send test notification</button>
-          <button id="refresh" type="button">Refresh</button>
-          <button id="logout" class="secondary" type="button">Sign out</button>
         </div>
       </header>
 
@@ -43,7 +46,7 @@
         <div>
           <p class="eyebrow">SERVER MIGRATION</p>
           <h2 id="link-delivery-title">Send client connection links</h2>
-          <p class="muted link-delivery-note">Links are refreshed during scheduled 3X-UI audits. Send the latest cached VLESS link to each matched, verified Telegram user without another panel request.</p>
+          <p class="muted link-delivery-note">Links are refreshed during scheduled audits or by Update from 3X-UI. Send the latest cached VLESS link to each matched, verified Telegram user without another panel request.</p>
         </div>
         <div class="link-delivery-controls">
           <label class="link-server-field">

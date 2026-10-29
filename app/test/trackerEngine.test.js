@@ -55,8 +55,8 @@ test('tracks Telegram-bound clients and sends a single expiry notification', asy
   assert.equal(notifications.length, 1);
   assert.match(notifications[0][1], /VLESS key expired/);
   assert.deepEqual(saved, [
-    ['expired@example.test', '101', 'expired@example.test', now - 1, true, 1, null, '["vless://expired@example.test"]'],
-    ['unbound@example.test', '', 'unbound@example.test', now + 1, true, 0, null, '["vless://unbound@example.test"]']
+    ['expired@example.test', '101', 'expired@example.test', now - 1, true, 1, null, 'expired', '["vless://expired@example.test"]'],
+    ['unbound@example.test', '', 'unbound@example.test', now + 1, true, 0, null, null, '["vless://unbound@example.test"]']
   ]);
 });
 
@@ -86,7 +86,7 @@ test('synchronizes an updated 3X-UI Telegram ID without waiting for a manual sav
   assert.equal(result.clientsTracked, 1);
   assert.equal(result.notificationsSent, 0);
   assert.deepEqual(saved, [[
-    'client@example.test', 'new-chat-id', 'client@example.test', now + (10 * 24 * 60 * 60 * 1000), true, 0, null, '["vless://client@example.test"]'
+    'client@example.test', 'new-chat-id', 'client@example.test', now + (10 * 24 * 60 * 60 * 1000), true, 0, null, null, '["vless://client@example.test"]'
   ]]);
 });
 
@@ -106,7 +106,7 @@ test('notifies on a state change and resets an old expiry notification after ext
 
   const result = await engine.runAudit();
   assert.equal(result.notificationsSent, 1);
-  assert.deepEqual(saved, [['changed@example.test', '202', 'changed@example.test', now + 60_000, false, 0, null, '["vless://changed@example.test"]']]);
+  assert.deepEqual(saved, [['changed@example.test', '202', 'changed@example.test', now + 60_000, false, 0, null, 'configuration_updated', '["vless://changed@example.test"]']]);
 });
 
 test('refreshes the stored VLESS link when 3X-UI returns an updated link', async () => {
@@ -132,7 +132,7 @@ test('refreshes the stored VLESS link when 3X-UI returns an updated link', async
   assert.equal(result.clientLinksFetched, 1);
   assert.equal(result.clientLinksUpdated, 1);
   assert.equal(result.notificationsSent, 0);
-  assert.equal(saved[0][7], '["vless://new-link"]');
+  assert.equal(saved[0][8], '["vless://new-link"]');
 });
 
 test('sends one final-three-days reminder per Asia/Yangon calendar day with remaining days', async () => {
@@ -155,13 +155,14 @@ test('sends one final-three-days reminder per Asia/Yangon calendar day with rema
     }),
     getClientLinks: async () => ['vless://reminder@example.test'],
     getState: async () => state,
-    saveState: async (id, tgId, email, expiry, enabled, expiredNotified, reminderDay) => {
+    saveState: async (id, tgId, email, expiry, enabled, expiredNotified, reminderDay, notificationType) => {
       state = {
         telegram_id: tgId,
         expiry_time: expiry,
         is_enabled: enabled ? 1 : 0,
         is_expired_notified: expiredNotified,
-        last_expiry_reminder_day: reminderDay
+        last_expiry_reminder_day: reminderDay,
+        last_notification_type: notificationType
       };
     },
     notify: async (tgId, message) => {
@@ -175,6 +176,7 @@ test('sends one final-three-days reminder per Asia/Yangon calendar day with rema
   assert.equal(messages.length, 1);
   assert.match(messages[0].message, /Remaining: \*3 days\*/);
   assert.equal(state.last_expiry_reminder_day, '2026-01-10');
+  assert.equal(state.last_notification_type, 'expires_in_3_days');
 });
 
 test('sends a manual test message once per distinct detail-response tgId', async () => {
@@ -457,4 +459,39 @@ test('delivers only the requested cached client link without contacting the pane
   assert.equal(notifications.length, 1);
   assert.equal(notifications[0][0], '101');
   assert.match(notifications[0][1], /vless:\/\/alice@example\.test/);
+});
+
+test('sends a plain-text custom announcement to every distinct tracked Telegram customer on a server', async () => {
+  const notifications = [];
+  const selectedServer = { id: 9, group_name: 'Production', name: 'Panel' };
+  const engine = new TrackerEngine({
+    logger: { info() {}, error() {} },
+    listClientAnnouncementRecipientsForServer: async () => [
+      { email: 'alice@example.test', telegram_id: '101' },
+      { email: 'alice-second-key@example.test', telegram_id: '101' },
+      { email: 'bob@example.test', telegram_id: '202' },
+      { email: 'unbound@example.test', telegram_id: '' }
+    ],
+    notifyAnnouncement: async (...args) => {
+      notifications.push(args);
+      return true;
+    }
+  });
+
+  assert.deepEqual(await engine.sendCustomAnnouncement(selectedServer, {
+    message: 'Maintenance starts at 10:00.'
+  }), {
+    success: true,
+    skipped: false,
+    clientsChecked: 4,
+    recipients: 2,
+    sent: 2,
+    failed: 0,
+    skippedClients: 2,
+    missingTelegram: 1
+  });
+  assert.deepEqual(notifications, [
+    ['101', 'Maintenance starts at 10:00.'],
+    ['202', 'Maintenance starts at 10:00.']
+  ]);
 });

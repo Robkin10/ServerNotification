@@ -19,7 +19,7 @@ Existing single-server environment variables are supported as a one-time import 
 
 `CHECK_INTERVAL_CRON` defaults to every two minutes. The initial audit begins after the dashboard starts; a failed panel call is shown as a sanitized dashboard error and is retried by the next scheduled run. For expiring keys, the tracker sends one reminder in each final `NOTIFICATION_TIME_ZONE` calendar-day bucket with 3, 2, and 1 day remaining, including the remaining-day count. It records the reminder day in SQLite so the frequent audit schedule cannot duplicate a day's reminder.
 
-The dashboard's **Send test notification** button asks for confirmation, then sends one labeled test message to each distinct valid `tgId` within each enabled server. The **Send client links** action is also fixed and authenticated, but is scoped to the server selected in the dashboard; it is not a free-form messaging endpoint and returns only aggregate delivery counts.
+The dashboard's **Send test notification** button asks for confirmation, then sends one labeled test message to each distinct valid `tgId` within each enabled server. The **Send client links** action is also fixed and authenticated, but is scoped to the server selected in the dashboard and returns only aggregate delivery counts. The **Announcements** page lets an administrator select one enabled server and send one plain-text custom message to every distinct Telegram customer tracked on that server. It does not accept arbitrary Telegram IDs and never returns them to the browser.
 
 ## Tests
 

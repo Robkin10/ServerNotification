@@ -52,6 +52,17 @@ function clientServerLabel(client) {
   return [client.serverGroup, client.serverName].filter(Boolean).join(' / ') || 'Unknown server';
 }
 
+function notificationLabel(type) {
+  const labels = {
+    expired: 'Expired',
+    configuration_updated: 'Configuration updated',
+    expires_in_3_days: '3 days remaining',
+    expires_in_2_days: '2 days remaining',
+    expires_in_1_days: '1 day remaining'
+  };
+  return labels[type] || null;
+}
+
 function renderRows() {
   const search = elements.filter.value.trim().toLowerCase();
   const visibleClients = clients.filter((client) => `${client.email} ${client.telegramId || ''} ${clientServerLabel(client)}`.toLowerCase().includes(search));
@@ -63,8 +74,12 @@ function renderRows() {
   elements.rows.innerHTML = visibleClients.map((client) => {
     const state = client.expired ? ['expired', 'Expired'] : client.enabled ? ['enabled', 'Enabled'] : ['disabled', 'Disabled'];
     const expiry = client.expiryTime ? formatDate(client.expiryTime) : 'No expiration';
-    const notification = client.expired ? (client.expiryNotified ? ['enabled', 'Sent'] : ['pending', 'Pending']) : '&mdash;';
-    const notificationHtml = Array.isArray(notification) ? `<span class="badge ${notification[0]}">${notification[1]}</span>` : notification;
+    const notification = notificationLabel(client.lastNotificationType);
+    const notificationHtml = notification
+      ? `<span class="badge enabled">${notification}</span>`
+      : client.expired
+        ? '<span class="badge pending">Pending</span>'
+        : '&mdash;';
     const canSendLink = Number.isSafeInteger(client.serverId) && Boolean(client.telegramId) && client.email !== '(unnamed)';
     const action = canSendLink
       ? `<button class="table-button send-client-link" type="button" data-server-id="${client.serverId}" data-client-email="${escapeHtml(client.email)}">Send link</button>`
@@ -122,9 +137,11 @@ async function requestJson(url, options = {}) {
   return payload;
 }
 
-async function loadDashboard() {
-  elements.refresh.disabled = true;
-  setStatus('loading', 'Refreshing');
+async function loadDashboard({ showLoading = true } = {}) {
+  if (showLoading) {
+    elements.refresh.disabled = true;
+    setStatus('loading', 'Refreshing');
+  }
   try {
     const payload = await requestJson('/api/dashboard');
     render(payload.data);
@@ -133,7 +150,30 @@ async function loadDashboard() {
     elements.error.hidden = false;
     elements.error.textContent = 'Could not load dashboard data. Refresh to try again.';
   } finally {
+    if (showLoading) elements.refresh.disabled = false;
+  }
+}
+
+async function refreshFromPanel() {
+  elements.refresh.disabled = true;
+  elements.refresh.textContent = 'Updating...';
+  setStatus('loading', 'Updating 3X-UI');
+  try {
+    const payload = await requestJson('/api/audit', {
+      method: 'POST',
+      headers: { 'X-Requested-With': 'XMLHttpRequest' }
+    });
+    await Promise.all([loadDashboard({ showLoading: false }), loadLinkServers()]);
+    elements.error.hidden = false;
+    elements.error.classList.add('success-message');
+    elements.error.textContent = payload.message;
+  } catch (error) {
+    elements.error.hidden = false;
+    elements.error.classList.remove('success-message');
+    elements.error.textContent = error.message || 'Could not update client links from 3X-UI.';
+  } finally {
     elements.refresh.disabled = false;
+    elements.refresh.textContent = 'Update from 3X-UI';
   }
 }
 
@@ -247,7 +287,7 @@ async function initialiseDashboard() {
   }
 }
 
-elements.refresh.addEventListener('click', loadDashboard);
+elements.refresh.addEventListener('click', refreshFromPanel);
 elements.sendTestNotification.addEventListener('click', sendTestNotification);
 elements.linkServer.addEventListener('change', updateLinkDeliveryButton);
 elements.sendClientLinks.addEventListener('click', sendClientLinks);

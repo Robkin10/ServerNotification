@@ -63,7 +63,7 @@ test('shows a login screen and protects dashboard data with a session', async ()
     getClientSummary: async () => ({ total: 1, enabled: 1, disabled: 0, expired: 0, expiring: 1 }),
     listClientStates: async () => [{
       vless_id: 'client-id', telegram_id: '42', email: 'user@example.test', expiry_time: 1_900_000_000_000,
-      is_enabled: 1, is_expired_notified: 0
+      is_enabled: 1, is_expired_notified: 0, last_notification_type: 'expires_in_3_days'
     }]
   };
   const server = http.createServer(createApp({ engine, database, environment }));
@@ -104,13 +104,17 @@ test('shows a login screen and protects dashboard data with a session', async ()
     assert.equal(payload.data.summary.total, 1);
     assert.deepEqual(payload.data.clients[0], {
       id: 'client-id', email: 'user@example.test', telegramId: '42', expiryTime: 1_900_000_000_000,
-      enabled: true, expired: false, expiryNotified: false
+      enabled: true, expired: false, expiryNotified: false, lastNotificationType: 'expires_in_3_days'
     });
 
     const serverManagement = await request(port, '/servers', { headers: session.headers });
     assert.equal(serverManagement.status, 200);
     assert.match(serverManagement.body, /Add Server details/);
     assert.doesNotMatch(serverManagement.body, /Tracked VLESS keys/);
+
+    const announcements = await request(port, '/announcements', { headers: session.headers });
+    assert.equal(announcements.status, 200);
+    assert.match(announcements.body, /Custom server announcement/);
 
     const missingCsrf = await request(port, '/api/notifications/test', {
       method: 'POST', headers: { ...session.headers, 'X-Requested-With': 'XMLHttpRequest' }
@@ -143,6 +147,71 @@ test('shows a login screen and protects dashboard data with a session', async ()
 
 test('uses documented local dashboard defaults when credentials are omitted', () => {
   assert.deepEqual(dashboardCredentials({}), { username: 'admin', password: 'admin123' });
+});
+
+test('runs a CSRF-protected manual panel update without returning VLESS links', async () => {
+  let auditCalls = 0;
+  const engine = {
+    getStatus: () => ({}),
+    runAudit: async () => {
+      auditCalls += 1;
+      return {
+        success: true,
+        skipped: false,
+        clientsFetched: 3,
+        clientsTracked: 2,
+        clientDetailsFailed: 1,
+        clientLinksFetched: 2,
+        clientLinksFailed: 0,
+        clientLinksUpdated: 1,
+        clientsRemoved: 0,
+        serversAudited: 1,
+        serversFailed: 0
+      };
+    }
+  };
+  const server = http.createServer(createApp({ engine, database: {}, environment: { DASHBOARD_USER: 'user', DASHBOARD_PASS: 'pass' } }));
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+
+  try {
+    const port = server.address().port;
+    const session = await signIn(port, 'user', 'pass');
+    const forbidden = await request(port, '/api/audit', { method: 'POST', headers: session.headers });
+    assert.equal(forbidden.status, 403);
+
+    const refreshed = await request(port, '/api/audit', {
+      method: 'POST',
+      headers: {
+        ...session.headers, 'X-Requested-With': 'XMLHttpRequest', 'X-CSRF-Token': session.csrfToken
+      }
+    });
+    assert.equal(refreshed.status, 200);
+    assert.equal(auditCalls, 1);
+    assert.deepEqual(JSON.parse(refreshed.body), {
+      success: true,
+      message: '3X-UI update complete: 2 clients checked; 1 VLESS link cache updated.',
+      data: {
+        audit: {
+          success: true,
+          skipped: false,
+          clientsFetched: 3,
+          clientsTracked: 2,
+          clientDetailsFailed: 1,
+          clientLinksFetched: 2,
+          clientLinksFailed: 0,
+          clientLinksUpdated: 1,
+          clientsRemoved: 0,
+          serversAudited: 1,
+          serversFailed: 0
+        }
+      }
+    });
+    assert.doesNotMatch(refreshed.body, /vless:\/\//i);
+  } finally {
+    server.close();
+    await once(server, 'close');
+  }
 });
 
 test('stores server details through the protected session API without returning credentials', async () => {
@@ -323,6 +392,61 @@ test('sends an individual client link only to the requested panel client', async
       }
     });
     assert.doesNotMatch(delivered.body, /not-returned|vless:\/\//);
+  } finally {
+    server.close();
+    await once(server, 'close');
+  }
+});
+
+test('sends a CSRF-protected custom announcement to all selected-server customers', async () => {
+  const calls = [];
+  const configuredServer = {
+    id: 12, group_name: 'Production', name: 'Japan', base_url: 'https://panel.example.test',
+    bearer_token: 'not-returned', username: 'panel-user', password: 'not-returned', is_enabled: 1
+  };
+  const engine = {
+    getStatus: () => ({}),
+    sendCustomAnnouncement: async (...args) => {
+      calls.push(args);
+      return {
+        success: true, skipped: false, clientsChecked: 3, recipients: 2,
+        sent: 2, failed: 0, skippedClients: 1, missingTelegram: 1
+      };
+    }
+  };
+  const database = { getTrackedServer: async (id) => Number(id) === 12 ? configuredServer : undefined };
+  const server = http.createServer(createApp({ engine, database, environment: { DASHBOARD_USER: 'user', DASHBOARD_PASS: 'pass' } }));
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+
+  try {
+    const port = server.address().port;
+    const session = await signIn(port, 'user', 'pass');
+    const forbidden = await request(port, '/api/servers/12/notifications/announcement', {
+      method: 'POST',
+      headers: { ...session.headers, 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+      body: JSON.stringify({ message: 'Maintenance starts at 10:00.' })
+    });
+    assert.equal(forbidden.status, 403);
+
+    const delivered = await request(port, '/api/servers/12/notifications/announcement', {
+      method: 'POST',
+      headers: {
+        ...session.headers, 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest', 'X-CSRF-Token': session.csrfToken
+      },
+      body: JSON.stringify({ message: 'Maintenance starts at 10:00.' })
+    });
+    assert.equal(delivered.status, 200);
+    assert.deepEqual(calls, [[configuredServer, { message: 'Maintenance starts at 10:00.' }]]);
+    assert.deepEqual(JSON.parse(delivered.body), {
+      success: true,
+      message: 'Custom announcement complete: 2 delivered, 0 failed, 1 skipped.',
+      result: {
+        clientsChecked: 3, recipients: 2, sent: 2, failed: 0,
+        skippedClients: 1, missingTelegram: 1
+      }
+    });
+    assert.doesNotMatch(delivered.body, /not-returned/);
   } finally {
     server.close();
     await once(server, 'close');

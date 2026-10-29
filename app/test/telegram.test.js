@@ -18,6 +18,20 @@ test('uses the installed Telegram v2 Bot API to send a Markdown direct message',
   assert.deepEqual(sent, [{ chat_id: '123', text: '*hello*', parse_mode: 'Markdown' }]);
 });
 
+test('sends custom announcements as plain text', async () => {
+  const sent = [];
+  const notifier = createTelegramNotifier({
+    token: 'test-token',
+    logger: { error() {} },
+    createBot: () => ({
+      api: { sendMessage: async (payload) => sent.push(payload) }
+    })
+  });
+
+  assert.equal(await notifier.sendPlainTextMessage(123, 'Maintenance starts at 10:00.'), true);
+  assert.deepEqual(sent, [{ chat_id: '123', text: 'Maintenance starts at 10:00.' }]);
+});
+
 test('reports a chat-permission failure without throwing', async () => {
   const errors = [];
   const notifier = createTelegramNotifier({

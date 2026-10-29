@@ -114,7 +114,8 @@ function serialiseClient(row, now) {
     expiryTime,
     enabled,
     expired,
-    expiryNotified: Number(row.is_expired_notified) === 1
+    expiryNotified: Number(row.is_expired_notified) === 1,
+    lastNotificationType: row.last_notification_type || null
   };
   if (row.server_id !== undefined && row.server_id !== null) client.serverId = Number(row.server_id);
   if (row.server_name) client.serverName = row.server_name;
@@ -145,6 +146,24 @@ function serialiseInitialSync(result) {
     clientsFetched: Number(result.clientsFetched) || 0,
     clientsTracked: Number(result.clientsTracked) || 0,
     clientDetailsFailed: Number(result.clientDetailsFailed) || 0
+  };
+}
+
+/** Aggregate-only response for a dashboard-triggered panel refresh. */
+function serialiseManualAudit(result) {
+  if (!result || typeof result !== 'object') return null;
+  return {
+    success: result.success === true,
+    skipped: result.skipped === true,
+    clientsFetched: Number(result.clientsFetched) || 0,
+    clientsTracked: Number(result.clientsTracked) || 0,
+    clientDetailsFailed: Number(result.clientDetailsFailed) || 0,
+    clientLinksFetched: Number(result.clientLinksFetched) || 0,
+    clientLinksFailed: Number(result.clientLinksFailed) || 0,
+    clientLinksUpdated: Number(result.clientLinksUpdated) || 0,
+    clientsRemoved: Number(result.clientsRemoved) || 0,
+    serversAudited: Number(result.serversAudited) || 0,
+    serversFailed: Number(result.serversFailed) || 0
   };
 }
 
@@ -235,6 +254,15 @@ function clientEmailFrom(request) {
   if (typeof email !== 'string' || !email.trim()) throw new InputError('Client email is required.');
   if (email.trim().length > 500) throw new InputError('Client email is too long.');
   return email.trim();
+}
+
+function announcementInput(payload) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    throw new InputError('Announcement details must be a JSON object.');
+  }
+  return {
+    message: valueFrom(payload, 'message', 'Announcement message', { maxLength: 4_000, trim: false })
+  };
 }
 
 function sendMutationError(response, error) {
@@ -348,6 +376,31 @@ function createApp({
     response.json({ success: true });
   });
 
+  // Refresh all enabled panels on demand. AuditService fetches each client's
+  // authoritative link and replaces only that client's cached VLESS links;
+  // a failed link read retains the previous cache.
+  app.post('/api/audit', async (request, response) => {
+    if (!requireDashboardRequest(request, response)) return;
+    if (typeof engine.runAudit !== 'function') {
+      response.status(503).json({ success: false, message: 'Panel updates are temporarily unavailable.' });
+      return;
+    }
+    try {
+      const audit = serialiseManualAudit(await engine.runAudit());
+      if (!audit || audit.skipped) {
+        response.status(409).json({ success: false, message: 'A panel update is already running.' });
+        return;
+      }
+      const linkDescription = `${audit.clientLinksUpdated} VLESS link cache${audit.clientLinksUpdated === 1 ? '' : 's'} updated`;
+      const message = audit.success
+        ? `3X-UI update complete: ${audit.clientsTracked} clients checked; ${linkDescription}.`
+        : `3X-UI update completed with errors: ${audit.clientsTracked} clients checked; ${linkDescription}. Existing links were retained when a panel link request failed.`;
+      response.json({ success: true, message, data: { audit } });
+    } catch {
+      response.status(500).json({ success: false, message: 'The 3X-UI update could not be completed.' });
+    }
+  });
+
   app.get('/api/dashboard', async (request, response) => {
     try {
       const now = Date.now();
@@ -438,6 +491,56 @@ function createApp({
       response.json({ success: true, message: 'Server and its stored client state were removed.' });
     } catch (error) {
       sendMutationError(response, error);
+    }
+  });
+
+  app.post('/api/servers/:serverId/notifications/announcement', async (request, response) => {
+    if (!requireDashboardRequest(request, response)) return;
+    try {
+      const server = await database.getTrackedServer(serverIdFrom(request));
+      if (!server) {
+        response.status(404).json({ success: false, message: 'Server not found.' });
+        return;
+      }
+      if (Number(server.is_enabled) !== 1) {
+        response.status(409).json({ success: false, message: 'Enable the selected server before sending an announcement.' });
+        return;
+      }
+      if (typeof engine.sendCustomAnnouncement !== 'function') {
+        response.status(503).json({ success: false, message: 'Server announcements are temporarily unavailable.' });
+        return;
+      }
+      const result = await engine.sendCustomAnnouncement(server, announcementInput(request.body));
+      if (result.skipped) {
+        response.status(409).json({ success: false, message: 'An announcement is already being sent to this server.' });
+        return;
+      }
+      if (result.clientsChecked === 0) {
+        response.status(409).json({ success: false, message: 'No tracked customers were found on the selected server.' });
+        return;
+      }
+      if (result.recipients === 0) {
+        response.status(409).json({ success: false, message: 'No tracked customers on this server are linked to Telegram.' });
+        return;
+      }
+      response.json({
+        success: result.success,
+        message: `Custom announcement complete: ${result.sent} delivered, ${result.failed} failed, ${result.skippedClients} skipped.`,
+        result: {
+          clientsChecked: result.clientsChecked,
+          recipients: result.recipients,
+          sent: result.sent,
+          failed: result.failed,
+          skippedClients: result.skippedClients,
+          missingTelegram: result.missingTelegram
+        }
+      });
+    } catch (error) {
+      if (error instanceof InputError) {
+        response.status(400).json({ success: false, message: error.message });
+        return;
+      }
+      response.status(500).json({ success: false, message: 'The server announcement could not be sent.' });
     }
   });
 
@@ -572,6 +675,10 @@ function createApp({
 
   app.get('/servers', (request, response) => {
     response.sendFile(path.join(__dirname, 'public', 'servers.html'));
+  });
+
+  app.get('/announcements', (request, response) => {
+    response.sendFile(path.join(__dirname, 'public', 'announcements.html'));
   });
 
   app.get('/', (request, response) => {

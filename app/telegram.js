@@ -75,13 +75,14 @@ function createTelegramNotifier({
     return bot;
   }
 
-  async function sendDirectMessage(chatId, markdownText) {
+  async function sendMessage(chatId, text, parseMode) {
     try {
-      await getBot().api.sendMessage({
+      const payload = {
         chat_id: String(chatId),
-        text: markdownText,
-        parse_mode: 'Markdown'
-      });
+        text
+      };
+      if (parseMode) payload.parse_mode = parseMode;
+      await getBot().api.sendMessage(payload);
       return true;
     } catch (error) {
       const errorCode = error?.errorCode || error?.response?.body?.error_code || error?.response?.statusCode;
@@ -98,6 +99,14 @@ function createTelegramNotifier({
       }
       return false;
     }
+  }
+
+  function sendDirectMessage(chatId, markdownText) {
+    return sendMessage(chatId, markdownText, 'Markdown');
+  }
+
+  function sendPlainTextMessage(chatId, text) {
+    return sendMessage(chatId, text);
   }
 
   async function handleStart(context) {
@@ -147,7 +156,7 @@ function createTelegramNotifier({
     await pollingPromise;
   }
 
-  return { sendDirectMessage, startWelcomeListener, stopWelcomeListener };
+  return { sendDirectMessage, sendPlainTextMessage, startWelcomeListener, stopWelcomeListener };
 }
 
 const defaultNotifier = createTelegramNotifier();
@@ -156,6 +165,7 @@ module.exports = {
   createTelegramNotifier,
   formatExpiration,
   sendDirectMessage: defaultNotifier.sendDirectMessage,
+  sendPlainTextMessage: defaultNotifier.sendPlainTextMessage,
   startWelcomeListener: defaultNotifier.startWelcomeListener,
   stopWelcomeListener: defaultNotifier.stopWelcomeListener,
   subscriptionStatus,

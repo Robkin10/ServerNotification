@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="dark">
+    <title>Server announcements · 3X-UI Tracker</title>
+    <link rel="stylesheet" href="/styles.css">
+    <script src="/announcements.js" defer></script>
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">CUSTOMER COMMUNICATION</p>
+          <h1>Send an announcement</h1>
+        </div>
+        <div class="header-controls">
+          <div class="header-utilities">
+            <button id="logout" class="secondary" type="button">Sign out</button>
+          </div>
+          <nav class="primary-nav" aria-label="Primary navigation">
+            <a class="nav-link" href="/">Dashboard</a>
+            <a class="nav-link" href="/servers">Servers</a>
+            <a class="nav-link active" href="/announcements" aria-current="page">Announcements</a>
+          </nav>
+        </div>
+      </header>
+
+      <section class="announcement-panel" aria-labelledby="announcement-title">
+        <div class="panel-heading compact-heading">
+          <div>
+            <p class="eyebrow">TELEGRAM BOT</p>
+            <h2 id="announcement-title">Custom server announcement</h2>
+          </div>
+        </div>
+        <form id="announcement-form" class="announcement-form">
+          <p class="announcement-note">Choose an enabled server and write the message for all of its Telegram-linked customers. Messages are sent as plain text, and each Telegram account receives the announcement once.</p>
+          <label>
+            <span>Server</span>
+            <select id="announcement-server" required>
+              <option value="">Select an enabled server</option>
+            </select>
+          </label>
+          <label>
+            <span>Message</span>
+            <textarea id="announcement-message" maxlength="4000" placeholder="Write the announcement to send to all linked customers..." required></textarea>
+          </label>
+          <div class="form-actions">
+            <button id="send-announcement" type="submit" disabled>Send to all customers</button>
+          </div>
+          <p id="announcement-result" class="announcement-message" aria-live="polite"></p>
+        </form>
+      </section>
+    </main>
+  </body>
+</html>

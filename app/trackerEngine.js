@@ -29,7 +29,7 @@ const { TestNotificationService } = require('./tracker/testNotificationService')
 
 /**
  * Application-facing facade for tracker operations. The implementation is
- * composed from focused services so audit, notification, cache, link-delivery,
+ * composed from focused services so audit, notification, link-delivery,
  * and concurrency rules can change independently.
  */
 class TrackerEngine {
@@ -75,6 +75,7 @@ class TrackerEngine {
     });
     this.linkDeliveryService = new LinkDeliveryService({
       listClientStatesForServer: options.listClientStatesForServer || listClientStatesForServer,
+      createLinkSource: (server) => sourceFactory.createLinkSource(server),
       notify
     });
     this.announcementService = new AnnouncementService({

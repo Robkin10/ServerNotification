@@ -50,7 +50,6 @@ async function createClientStateTable() {
     is_expired_notified INTEGER DEFAULT 0,
     last_expiry_reminder_day TEXT,
     last_notification_type TEXT,
-    vless_links TEXT,
     PRIMARY KEY (server_id, client_id)
   )`);
   await run('CREATE INDEX IF NOT EXISTS client_state_server_idx ON client_state(server_id)');
@@ -69,34 +68,54 @@ async function migrateClientStateTable() {
   }
 
   const columns = await all('PRAGMA table_info(client_state)');
-  if (columns.some((column) => column.name === 'server_id') && columns.some((column) => column.name === 'client_id')) {
-    if (!columns.some((column) => column.name === 'vless_links')) {
-      await run('ALTER TABLE client_state ADD COLUMN vless_links TEXT');
+  const hasColumn = (name) => columns.some((column) => column.name === name);
+  const isServerScoped = hasColumn('server_id') && hasColumn('client_id');
+  const hasReminderColumn = hasColumn('last_expiry_reminder_day');
+  const hasNotificationTypeColumn = hasColumn('last_notification_type');
+
+  if (isServerScoped && !hasColumn('vless_links')) {
+    if (!hasReminderColumn) {
+      await run('ALTER TABLE client_state ADD COLUMN last_expiry_reminder_day TEXT');
     }
-    if (!columns.some((column) => column.name === 'last_notification_type')) {
+    if (!hasNotificationTypeColumn) {
       await run('ALTER TABLE client_state ADD COLUMN last_notification_type TEXT');
     }
     await run('CREATE INDEX IF NOT EXISTS client_state_server_idx ON client_state(server_id)');
     return;
   }
 
-  const hasReminderColumn = columns.some((column) => column.name === 'last_expiry_reminder_day');
-  const hasNotificationTypeColumn = columns.some((column) => column.name === 'last_notification_type');
+  // SQLite cannot reliably drop a column on every supported deployment. Rebuild
+  // the table to permanently remove legacy cached VLESS links while preserving
+  // client tracking and notification state.
   await run('BEGIN IMMEDIATE');
   try {
     await run('ALTER TABLE client_state RENAME TO client_state_legacy');
     await createClientStateTable();
-    await run(
-      `INSERT INTO client_state (
-        server_id, client_id, telegram_id, email, expiry_time, is_enabled,
-        is_expired_notified, last_expiry_reminder_day, last_notification_type, vless_links
-      )
-      SELECT 0, vless_id, telegram_id, email, expiry_time, is_enabled,
-        is_expired_notified, ${hasReminderColumn ? 'last_expiry_reminder_day' : 'NULL'},
-        ${hasNotificationTypeColumn ? 'last_notification_type' : 'NULL'}, NULL
-      FROM client_state_legacy`
-    );
+    if (isServerScoped) {
+      await run(
+        `INSERT INTO client_state (
+          server_id, client_id, telegram_id, email, expiry_time, is_enabled,
+          is_expired_notified, last_expiry_reminder_day, last_notification_type
+        )
+        SELECT server_id, client_id, telegram_id, email, expiry_time, is_enabled,
+          is_expired_notified, ${hasReminderColumn ? 'last_expiry_reminder_day' : 'NULL'},
+          ${hasNotificationTypeColumn ? 'last_notification_type' : 'NULL'}
+        FROM client_state_legacy`
+      );
+    } else {
+      await run(
+        `INSERT INTO client_state (
+          server_id, client_id, telegram_id, email, expiry_time, is_enabled,
+          is_expired_notified, last_expiry_reminder_day, last_notification_type
+        )
+        SELECT 0, vless_id, telegram_id, email, expiry_time, is_enabled,
+          is_expired_notified, ${hasReminderColumn ? 'last_expiry_reminder_day' : 'NULL'},
+          ${hasNotificationTypeColumn ? 'last_notification_type' : 'NULL'}
+        FROM client_state_legacy`
+      );
+    }
     await run('DROP TABLE client_state_legacy');
+    await run('CREATE INDEX IF NOT EXISTS client_state_server_idx ON client_state(server_id)');
     await run('COMMIT');
   } catch (error) {
     await run('ROLLBACK').catch(() => {});
@@ -246,14 +265,13 @@ function upsertClientState(
   isEnabled,
   isExpiredNotified,
   lastExpiryReminderDay = null,
-  lastNotificationType = null,
-  vlessLinks = null
+  lastNotificationType = null
 ) {
   return run(
     `INSERT INTO client_state (
       server_id, client_id, telegram_id, email, expiry_time, is_enabled,
-      is_expired_notified, last_expiry_reminder_day, last_notification_type, vless_links
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      is_expired_notified, last_expiry_reminder_day, last_notification_type
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(server_id, client_id) DO UPDATE SET
       telegram_id = excluded.telegram_id,
       email = excluded.email,
@@ -261,8 +279,7 @@ function upsertClientState(
       is_enabled = excluded.is_enabled,
       is_expired_notified = excluded.is_expired_notified,
       last_expiry_reminder_day = excluded.last_expiry_reminder_day,
-      last_notification_type = excluded.last_notification_type,
-      vless_links = excluded.vless_links`,
+      last_notification_type = excluded.last_notification_type`,
     [
       Number(serverId),
       String(clientId),
@@ -272,15 +289,14 @@ function upsertClientState(
       isEnabled ? 1 : 0,
       isExpiredNotified ? 1 : 0,
       lastExpiryReminderDay || null,
-      lastNotificationType || null,
-      vlessLinks || null
+      lastNotificationType || null
     ]
   );
 }
 
-/** Cached credentials stay in the database and are never exposed to dashboard routes. */
+/** Minimal tracked-recipient data; VLESS links are never persisted locally. */
 function listClientStatesForServer(serverId) {
-  return all(`SELECT client_id, telegram_id, email, vless_links
+  return all(`SELECT client_id, telegram_id, email
     FROM client_state
     WHERE server_id = ?
     ORDER BY email COLLATE NOCASE ASC`, [Number(serverId)]);

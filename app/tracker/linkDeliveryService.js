@@ -1,4 +1,4 @@
-const { cachedClientLinks, emailKey } = require('./linkCache');
+const { emailKey, normaliseClientLinks } = require('./linkUtils');
 const { escapeMarkdown, isValidTelegramId, serverLine } = require('./notificationPolicy');
 
 function clientLinkMessage(email, server, link) {
@@ -9,14 +9,17 @@ function clientLinkMessage(email, server, link) {
     `Email: \`${escapeMarkdown(email)}\``,
     '',
     'Import or Paste this link into your VLESS client:',
-    `\`${escapeMarkdown(link)}\``
+    // This is a legacy Telegram Markdown code entity. Escaping inside it is
+    // forbidden and would corrupt URI characters such as `_` when copied.
+    `\`${String(link ?? '')}\``
   ].filter(Boolean).join('\n');
 }
 
-/** Sends only persisted links, so delivery never queries panel credentials. */
+/** Fetches and sends current panel links for tracked, server-scoped recipients. */
 class LinkDeliveryService {
-  constructor({ listClientStatesForServer, notify }) {
+  constructor({ listClientStatesForServer, createLinkSource, notify }) {
     this.listClientStatesForServer = listClientStatesForServer;
+    this.createLinkSource = createLinkSource;
     this.notify = notify;
   }
 
@@ -49,6 +52,13 @@ class LinkDeliveryService {
       linkFailures: 0
     };
     const checkedEmails = new Set();
+    let linkSourcePromise;
+
+    const freshLinksFor = async (client) => {
+      if (!linkSourcePromise) linkSourcePromise = this.createLinkSource(server);
+      const linkSource = await linkSourcePromise;
+      return normaliseClientLinks(await linkSource.getClientLinks(client.email));
+    };
 
     for (const client of clients) {
       const storedEmail = emailKey(client?.email);
@@ -63,7 +73,14 @@ class LinkDeliveryService {
         continue;
       }
 
-      const links = cachedClientLinks(client.vless_links);
+      let links;
+      try {
+        links = await freshLinksFor(client);
+      } catch {
+        result.linkFailures += 1;
+        result.skippedClients += 1;
+        continue;
+      }
       if (!links.length) {
         result.linkFailures += 1;
         result.skippedClients += 1;

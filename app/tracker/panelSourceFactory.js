@@ -20,8 +20,7 @@ class PanelSourceFactory {
     if (!this.multiServerMode) {
       return {
         clients: await this.listClients({ twoFactorCode: this.twoFactorCode() }),
-        getClientDetails: (email) => this.getClientDetails(email, { twoFactorCode: this.twoFactorCode() }),
-        getClientLinks: (email) => this.getClientLinks(email, { twoFactorCode: this.twoFactorCode() })
+        getClientDetails: (email) => this.getClientDetails(email, { twoFactorCode: this.twoFactorCode() })
       };
     }
 
@@ -33,7 +32,25 @@ class PanelSourceFactory {
     });
     return {
       clients: await panel.listClients({ twoFactorCode: this.twoFactorCode() }),
-      getClientDetails: (email) => panel.getClientDetails(email, { twoFactorCode: this.twoFactorCode() }),
+      getClientDetails: (email) => panel.getClientDetails(email, { twoFactorCode: this.twoFactorCode() })
+    };
+  }
+
+  /** Create a panel source for a fresh link send without enumerating all clients. */
+  async createLinkSource(server) {
+    if (!this.multiServerMode) {
+      return {
+        getClientLinks: (email) => this.getClientLinks(email, { twoFactorCode: this.twoFactorCode() })
+      };
+    }
+
+    const panel = await this.createPanelService({
+      baseUrl: server.base_url,
+      bearerToken: server.bearer_token,
+      username: server.username,
+      password: server.password
+    });
+    return {
       getClientLinks: (email) => panel.getClientLinks(email, { twoFactorCode: this.twoFactorCode() })
     };
   }

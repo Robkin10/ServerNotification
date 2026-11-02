@@ -1,6 +1,6 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
-const { TrackerEngine } = require('../trackerEngine');
+const { TrackerEngine, clientLinkMessage } = require('../trackerEngine');
 const { formatNotificationDate } = require('../dateFormat');
 
 test('formats Telegram expiry timestamps in Asia/Yangon', () => {
@@ -8,6 +8,14 @@ test('formats Telegram expiry timestamps in Asia/Yangon', () => {
     formatNotificationDate(Date.UTC(2026, 8, 29, 17, 30, 0)),
     '30 Sep 2026, 12:00 AM'
   );
+});
+
+test('preserves VLESS URI characters when formatting a Telegram link message', () => {
+  const link = 'vless://uuid@node.example.test:443?security=reality&pbk=abc_DEF-123#account';
+  const message = clientLinkMessage('client@example.test', { group_name: 'Production', name: 'Panel' }, link);
+
+  assert.ok(message.includes(`\`${link}\``));
+  assert.equal(message.includes('\\_'), false);
 });
 
 test('tracks Telegram-bound clients and sends a single expiry notification', async () => {
@@ -25,7 +33,9 @@ test('tracks Telegram-bound clients and sends a single expiry notification', asy
     getClientDetails: async (email) => email === 'expired@example.test'
       ? { id: 'expired-id', tgId: '101', email, expiryTime: now - 1, enable: true }
       : { id: 'unbound-id', email, expiryTime: now + 1, enable: true },
-    getClientLinks: async (email) => [`vless://${email}`],
+    getClientLinks: async () => {
+      throw new Error('Audits must not fetch VLESS links.');
+    },
     getState: async () => undefined,
     saveState: async (...args) => saved.push(args),
     notify: async (...args) => {
@@ -47,16 +57,13 @@ test('tracks Telegram-bound clients and sends a single expiry notification', asy
     invalidClients: 1,
     clientDetailsFetched: 2,
     clientDetailsFailed: 0,
-    clientLinksFetched: 2,
-    clientLinksFailed: 0,
-    clientLinksUpdated: 2,
     clientsRemoved: 0
   });
   assert.equal(notifications.length, 1);
   assert.match(notifications[0][1], /VLESS key expired/);
   assert.deepEqual(saved, [
-    ['expired@example.test', '101', 'expired@example.test', now - 1, true, 1, null, 'expired', '["vless://expired@example.test"]'],
-    ['unbound@example.test', '', 'unbound@example.test', now + 1, true, 0, null, null, '["vless://unbound@example.test"]']
+    ['expired@example.test', '101', 'expired@example.test', now - 1, true, 1, null, 'expired'],
+    ['unbound@example.test', '', 'unbound@example.test', now + 1, true, 0, null, null]
   ]);
 });
 
@@ -70,7 +77,9 @@ test('synchronizes an updated 3X-UI Telegram ID without waiting for a manual sav
     getClientDetails: async () => ({
       email: 'client@example.test', tgId: 'new-chat-id', expiryTime: now + (10 * 24 * 60 * 60 * 1000), enable: true
     }),
-    getClientLinks: async () => ['vless://client@example.test'],
+    getClientLinks: async () => {
+      throw new Error('Audits must not fetch VLESS links.');
+    },
     getState: async () => ({
       telegram_id: 'old-chat-id', expiry_time: now + (10 * 24 * 60 * 60 * 1000),
       is_enabled: 1, is_expired_notified: 0, last_expiry_reminder_day: null
@@ -86,7 +95,7 @@ test('synchronizes an updated 3X-UI Telegram ID without waiting for a manual sav
   assert.equal(result.clientsTracked, 1);
   assert.equal(result.notificationsSent, 0);
   assert.deepEqual(saved, [[
-    'client@example.test', 'new-chat-id', 'client@example.test', now + (10 * 24 * 60 * 60 * 1000), true, 0, null, null, '["vless://client@example.test"]'
+    'client@example.test', 'new-chat-id', 'client@example.test', now + (10 * 24 * 60 * 60 * 1000), true, 0, null, null
   ]]);
 });
 
@@ -98,7 +107,9 @@ test('notifies on a state change and resets an old expiry notification after ext
     logger: { info() {}, error() {} },
     listClients: async () => [{ id: 'changed-id', email: 'changed@example.test' }],
     getClientDetails: async (email) => ({ id: 'changed-id', tgId: '202', email, expiryTime: now + 60_000, enable: false }),
-    getClientLinks: async () => ['vless://changed@example.test'],
+    getClientLinks: async () => {
+      throw new Error('Audits must not fetch VLESS links.');
+    },
     getState: async () => ({ expiry_time: now - 60_000, is_enabled: 1, is_expired_notified: 1 }),
     saveState: async (...args) => saved.push(args),
     notify: async () => true
@@ -106,11 +117,12 @@ test('notifies on a state change and resets an old expiry notification after ext
 
   const result = await engine.runAudit();
   assert.equal(result.notificationsSent, 1);
-  assert.deepEqual(saved, [['changed@example.test', '202', 'changed@example.test', now + 60_000, false, 0, null, 'configuration_updated', '["vless://changed@example.test"]']]);
+  assert.deepEqual(saved, [['changed@example.test', '202', 'changed@example.test', now + 60_000, false, 0, null, 'configuration_updated']]);
 });
 
-test('refreshes the stored VLESS link when 3X-UI returns an updated link', async () => {
+test('audits state without fetching or persisting VLESS links', async () => {
   const saved = [];
+  let linkFetches = 0;
   const now = 1_750_000_000_000;
   const engine = new TrackerEngine({
     now: () => now,
@@ -119,20 +131,24 @@ test('refreshes the stored VLESS link when 3X-UI returns an updated link', async
     getClientDetails: async () => ({
       email: 'client@example.test', tgId: '101', expiryTime: now + (10 * 24 * 60 * 60 * 1000), enable: true
     }),
-    getClientLinks: async () => ['vless://new-link'],
+    getClientLinks: async () => {
+      linkFetches += 1;
+      throw new Error('Audits must not fetch VLESS links.');
+    },
     getState: async () => ({
       telegram_id: '101', expiry_time: now + (10 * 24 * 60 * 60 * 1000), is_enabled: 1,
-      is_expired_notified: 0, last_expiry_reminder_day: null, vless_links: '["vless://old-link"]'
+      is_expired_notified: 0, last_expiry_reminder_day: null
     }),
     saveState: async (...args) => saved.push(args),
     notify: async () => true
   });
 
   const result = await engine.runAudit();
-  assert.equal(result.clientLinksFetched, 1);
-  assert.equal(result.clientLinksUpdated, 1);
+  assert.equal(linkFetches, 0);
   assert.equal(result.notificationsSent, 0);
-  assert.equal(saved[0][8], '["vless://new-link"]');
+  assert.deepEqual(saved[0], [
+    'client@example.test', '101', 'client@example.test', now + (10 * 24 * 60 * 60 * 1000), true, 0, null, null
+  ]);
 });
 
 test('sends one final-three-days reminder per Asia/Yangon calendar day with remaining days', async () => {
@@ -258,7 +274,7 @@ test('isolates state and notifications for clients on different configured serve
   assert.match(notifications[1][1], /Server: `Beta \/ Two`/);
 });
 
-test('removes tracked VLESS keys that are absent from a complete panel client list', async () => {
+test('removes tracked clients that are absent from a complete panel client list', async () => {
   const removed = [];
   const engine = new TrackerEngine({
     logger: { info() {}, error() {} },
@@ -285,7 +301,7 @@ test('removes tracked VLESS keys that are absent from a complete panel client li
   assert.deepEqual(removed, [{ serverId: 31, clientIds: ['active@example.test'] }]);
 });
 
-test('removes all tracked VLESS keys for a server when its valid panel list is empty', async () => {
+test('removes all tracked clients for a server when its valid panel list is empty', async () => {
   const removed = [];
   const engine = new TrackerEngine({
     logger: { info() {}, error() {} },
@@ -308,7 +324,7 @@ test('removes all tracked VLESS keys for a server when its valid panel list is e
   assert.deepEqual(removed, [{ serverId: 34, clientIds: [] }]);
 });
 
-test('preserves tracked VLESS keys when the panel client list cannot be trusted', async () => {
+test('preserves tracked clients when the panel client list cannot be trusted', async () => {
   const removed = [];
   const engine = new TrackerEngine({
     logger: { info() {}, error() {} },
@@ -333,7 +349,7 @@ test('preserves tracked VLESS keys when the panel client list cannot be trusted'
   assert.deepEqual(removed, []);
 });
 
-test('preserves tracked VLESS keys when a panel client-list request fails', async () => {
+test('preserves tracked clients when a panel client-list request fails', async () => {
   const removed = [];
   const engine = new TrackerEngine({
     logger: { info() {}, error() {} },
@@ -386,8 +402,9 @@ test('sends test notifications separately for the same chat on each server', asy
   assert.match(notified[1][1], /Server: `West \/ Panel`/);
 });
 
-test('delivers cached selected-server links only to their saved Telegram recipients', async () => {
+test('fetches current selected-server links only for their saved Telegram recipients', async () => {
   const notifications = [];
+  const requestedEmails = [];
   const selectedServer = {
     id: 6, group_name: 'Migration', name: 'New node', base_url: 'https://panel.example.test',
     bearer_token: 'token', username: 'user', password: 'password'
@@ -395,10 +412,18 @@ test('delivers cached selected-server links only to their saved Telegram recipie
   const engine = new TrackerEngine({
     logger: { info() {}, error() {} },
     listClientStatesForServer: async () => [
-      { email: 'alice@example.test', telegram_id: '101', vless_links: '["vless://alice-uuid@vless.example.test:443?security=reality#alice"]' },
-      { email: 'unbound@example.test', telegram_id: '', vless_links: '["vless://unbound"]' },
-      { email: 'missing-link@example.test', telegram_id: '303', vless_links: '[]' }
+      { client_id: 'alice-id', email: 'alice@example.test', telegram_id: '101' },
+      { client_id: 'unbound-id', email: 'unbound@example.test', telegram_id: '' },
+      { client_id: 'missing-link-id', email: 'missing-link@example.test', telegram_id: '303' }
     ],
+    createPanelService: async () => ({
+      getClientLinks: async (email) => {
+        requestedEmails.push(email);
+        return email === 'alice@example.test'
+          ? ['vless://fresh-alice@vless.example.test:443?security=reality#alice']
+          : [];
+      }
+    }),
     notify: async (...args) => {
       notifications.push(args);
       return true;
@@ -418,15 +443,17 @@ test('delivers cached selected-server links only to their saved Telegram recipie
     detailFailures: 0,
     linkFailures: 1
   });
+  assert.deepEqual(requestedEmails, ['alice@example.test', 'missing-link@example.test']);
   assert.equal(notifications.length, 1);
   assert.equal(notifications[0][0], '101');
   assert.match(notifications[0][1], /Email: `alice@example\.test`/);
-  assert.match(notifications[0][1], /vless:\/\/alice-uuid@vless\.example\.test:443/);
+  assert.match(notifications[0][1], /vless:\/\/fresh-alice@vless\.example\.test:443/);
   assert.match(notifications[0][1], /Server: `Migration \/ New node`/);
 });
 
-test('delivers only the requested cached client link without contacting the panel', async () => {
+test('fetches only the requested current client link from the panel', async () => {
   const notifications = [];
+  const requestedEmails = [];
   const selectedServer = {
     id: 7, group_name: 'Migration', name: 'New node', base_url: 'https://panel.example.test',
     bearer_token: 'token', username: 'user', password: 'password'
@@ -434,9 +461,15 @@ test('delivers only the requested cached client link without contacting the pane
   const engine = new TrackerEngine({
     logger: { info() {}, error() {} },
     listClientStatesForServer: async () => [
-      { email: 'alice@example.test', telegram_id: '101', vless_links: '["vless://alice@example.test"]' },
-      { email: 'bob@example.test', telegram_id: '202', vless_links: '["vless://bob@example.test"]' }
+      { client_id: 'alice-id', email: 'alice@example.test', telegram_id: '101' },
+      { client_id: 'bob-id', email: 'bob@example.test', telegram_id: '202' }
     ],
+    createPanelService: async () => ({
+      getClientLinks: async (email) => {
+        requestedEmails.push(email);
+        return ['vless://fresh-alice@example.test'];
+      }
+    }),
     notify: async (...args) => {
       notifications.push(args);
       return true;
@@ -456,9 +489,10 @@ test('delivers only the requested cached client link without contacting the pane
     detailFailures: 0,
     linkFailures: 0
   });
+  assert.deepEqual(requestedEmails, ['alice@example.test']);
   assert.equal(notifications.length, 1);
   assert.equal(notifications[0][0], '101');
-  assert.match(notifications[0][1], /vless:\/\/alice@example\.test/);
+  assert.match(notifications[0][1], /vless:\/\/fresh-alice@example\.test/);
 });
 
 test('sends a plain-text custom announcement to every distinct tracked Telegram customer on a server', async () => {

@@ -85,4 +85,4 @@ deployment job. Add the deployment public key to the server user's
 host-key checking.
 
 Never remove `data/tracker.db` unless resetting all saved panel configuration,
-client state, cached links, and notification history is intended.
+client state, and notification history is intended.

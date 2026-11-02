@@ -161,9 +161,6 @@ test('runs a CSRF-protected manual panel update without returning VLESS links', 
         clientsFetched: 3,
         clientsTracked: 2,
         clientDetailsFailed: 1,
-        clientLinksFetched: 2,
-        clientLinksFailed: 0,
-        clientLinksUpdated: 1,
         clientsRemoved: 0,
         serversAudited: 1,
         serversFailed: 0
@@ -190,7 +187,7 @@ test('runs a CSRF-protected manual panel update without returning VLESS links', 
     assert.equal(auditCalls, 1);
     assert.deepEqual(JSON.parse(refreshed.body), {
       success: true,
-      message: '3X-UI update complete: 2 clients checked; 1 VLESS link cache updated.',
+      message: '3X-UI update complete: 2 clients checked.',
       data: {
         audit: {
           success: true,
@@ -198,9 +195,6 @@ test('runs a CSRF-protected manual panel update without returning VLESS links', 
           clientsFetched: 3,
           clientsTracked: 2,
           clientDetailsFailed: 1,
-          clientLinksFetched: 2,
-          clientLinksFailed: 0,
-          clientLinksUpdated: 1,
           clientsRemoved: 0,
           serversAudited: 1,
           serversFailed: 0

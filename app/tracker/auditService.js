@@ -1,5 +1,4 @@
 const { ThreeXuiApiError } = require('../panelApi');
-const { resolveLinkCache, emailKey } = require('./linkCache');
 
 function panelErrorMessage(error) {
   if (error instanceof ThreeXuiApiError) return error.toPublicMessage();
@@ -18,9 +17,6 @@ function createAuditResult(now, multiServerMode) {
     invalidClients: 0,
     clientDetailsFetched: 0,
     clientDetailsFailed: 0,
-    clientLinksFetched: 0,
-    clientLinksFailed: 0,
-    clientLinksUpdated: 0,
     clientsRemoved: 0
   };
   if (multiServerMode) {
@@ -59,30 +55,28 @@ class AuditService {
     return this.multiServerMode ? this.getState(server.id, clientId) : this.getState(clientId);
   }
 
-  async saveClientState(server, clientId, state, vlessLinks) {
+  async saveClientState(server, clientId, state) {
     if (this.multiServerMode) {
       return this.saveState(
         server.id, clientId, state.tgId, state.email, state.expiryTime, state.isEnabled,
-        state.isExpiredNotified, state.lastExpiryReminderDay, state.lastNotificationType, vlessLinks
+        state.isExpiredNotified, state.lastExpiryReminderDay, state.lastNotificationType
       );
     }
     return this.saveState(
       clientId, state.tgId, state.email, state.expiryTime, state.isEnabled,
-      state.isExpiredNotified, state.lastExpiryReminderDay, state.lastNotificationType, vlessLinks
+      state.isExpiredNotified, state.lastExpiryReminderDay, state.lastNotificationType
     );
   }
 
-  async auditClient(server, client, result, refreshedLinks) {
+  async auditClient(server, client, result) {
     const clientId = typeof client.email === 'string' ? client.email.trim() : '';
     if (!clientId) return;
 
     const previous = await this.getPreviousState(server, clientId);
-    const { linksChanged, vlessLinks } = resolveLinkCache(previous, refreshedLinks);
     const state = await this.notificationPolicy.evaluate({ client, previous, server });
 
-    if (linksChanged) result.clientLinksUpdated += 1;
     result.notificationsSent += state.notificationsSent;
-    await this.saveClientState(server, clientId, state, vlessLinks);
+    await this.saveClientState(server, clientId, state);
     result.clientsTracked += 1;
   }
 
@@ -107,18 +101,7 @@ class AuditService {
         const details = await source.getClientDetails(clientSummary.email);
         const client = { ...clientSummary, ...details, email: details.email || clientSummary.email };
         result.clientDetailsFetched += 1;
-        let refreshedLinks;
-        if (emailKey(details?.email) === emailKey(clientSummary.email)) {
-          try {
-            refreshedLinks = await source.getClientLinks(details.email);
-            result.clientLinksFetched += 1;
-          } catch {
-            result.clientLinksFailed += 1;
-          }
-        } else {
-          result.clientLinksFailed += 1;
-        }
-        await this.auditClient(server, client, result, refreshedLinks);
+        await this.auditClient(server, client, result);
       } catch {
         result.clientDetailsFailed += 1;
       }

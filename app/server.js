@@ -158,9 +158,6 @@ function serialiseManualAudit(result) {
     clientsFetched: Number(result.clientsFetched) || 0,
     clientsTracked: Number(result.clientsTracked) || 0,
     clientDetailsFailed: Number(result.clientDetailsFailed) || 0,
-    clientLinksFetched: Number(result.clientLinksFetched) || 0,
-    clientLinksFailed: Number(result.clientLinksFailed) || 0,
-    clientLinksUpdated: Number(result.clientLinksUpdated) || 0,
     clientsRemoved: Number(result.clientsRemoved) || 0,
     serversAudited: Number(result.serversAudited) || 0,
     serversFailed: Number(result.serversFailed) || 0
@@ -376,9 +373,8 @@ function createApp({
     response.json({ success: true });
   });
 
-  // Refresh all enabled panels on demand. AuditService fetches each client's
-  // authoritative link and replaces only that client's cached VLESS links;
-  // a failed link read retains the previous cache.
+  // Refresh all enabled panels on demand. VLESS links are fetched only when
+  // an administrator explicitly sends a client's link to its tracked recipient.
   app.post('/api/audit', async (request, response) => {
     if (!requireDashboardRequest(request, response)) return;
     if (typeof engine.runAudit !== 'function') {
@@ -391,10 +387,9 @@ function createApp({
         response.status(409).json({ success: false, message: 'A panel update is already running.' });
         return;
       }
-      const linkDescription = `${audit.clientLinksUpdated} VLESS link cache${audit.clientLinksUpdated === 1 ? '' : 's'} updated`;
       const message = audit.success
-        ? `3X-UI update complete: ${audit.clientsTracked} clients checked; ${linkDescription}.`
-        : `3X-UI update completed with errors: ${audit.clientsTracked} clients checked; ${linkDescription}. Existing links were retained when a panel link request failed.`;
+        ? `3X-UI update complete: ${audit.clientsTracked} clients checked.`
+        : `3X-UI update completed with errors: ${audit.clientsTracked} clients checked.`;
       response.json({ success: true, message, data: { audit } });
     } catch {
       response.status(500).json({ success: false, message: 'The 3X-UI update could not be completed.' });

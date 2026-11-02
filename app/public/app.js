@@ -222,11 +222,11 @@ async function sendClientLinks() {
   const server = selectedLinkServer();
   if (!server) return;
   const label = [server.groupName, server.name].filter(Boolean).join(' / ');
-  if (!window.confirm(`Send each latest cached VLESS link from ${label} to the matching Telegram user? Links are private credentials and will be sent only through the notification bot.`)) return;
+  if (!window.confirm(`Fetch and send each current VLESS link from ${label} to the matching Telegram user? Links are private credentials and will be sent only through the notification bot.`)) return;
 
   elements.sendClientLinks.disabled = true;
   elements.sendClientLinks.textContent = 'Sending links…';
-  showLinkDeliveryMessage('Sending the latest links cached from the selected server…');
+  showLinkDeliveryMessage('Fetching and sending the current links from the selected server…');
   try {
     const payload = await requestJson(`/api/servers/${encodeURIComponent(server.id)}/notifications/links`, {
       method: 'POST',
@@ -245,11 +245,11 @@ async function sendIndividualClientLink(button) {
   const serverId = Number(button.dataset.serverId);
   const email = button.dataset.clientEmail || '';
   if (!Number.isSafeInteger(serverId) || !email) return;
-  if (!window.confirm(`Send the latest cached VLESS link for ${email} to that user's Telegram account?`)) return;
+  if (!window.confirm(`Fetch and send the current VLESS link for ${email} to that user's Telegram account?`)) return;
 
   button.disabled = true;
   button.textContent = 'Sending…';
-  showLinkDeliveryMessage(`Sending the latest cached link for ${email}…`);
+  showLinkDeliveryMessage(`Fetching and sending the current link for ${email}…`);
   try {
     const payload = await requestJson(`/api/servers/${encodeURIComponent(serverId)}/notifications/links/${encodeURIComponent(email)}`, {
       method: 'POST',

@@ -1,4 +1,4 @@
-FROM node:26.10.0-bookworm-slim AS dependencies
+FROM node:26.13.0-bookworm-slim AS dependencies
 
 WORKDIR /app
 
@@ -11,7 +11,7 @@ RUN apt-get update \
 COPY package*.json ./
 RUN npm_config_build_from_source=true npm ci --omit=dev && npm cache clean --force
 
-FROM node:26.10.0-bookworm-slim
+FROM node:26.13.0-bookworm-slim
 
 WORKDIR /app
 ENV NODE_ENV=production
